@@ -88,6 +88,28 @@ class WindowTests(unittest.TestCase):
         self.assertIn('Erster Satz.', self.window.captions.toPlainText())
         self.assertIn('Nächster Satz.', self.window.captions.toPlainText())
 
+    def test_start_sends_capture_command_and_replaces_idle_placeholder(self):
+        self.window.output.addItem('Playback', 'playback.monitor')
+        self.window.model.setCurrentText('local-model')
+        self.window.start_capture()
+        self.window.send.assert_called_with('start')
+        self.assertTrue(self.window.running)
+        self.assertTrue(self.window.starting)
+        self.assertIn('Starting translation', self.window.captions.placeholderText())
+        self.event(dict(type='started'))
+        self.assertFalse(self.window.starting)
+        self.assertIn('Listening', self.window.captions.placeholderText())
+
+    def test_failed_start_does_not_leave_panel_showing_stop(self):
+        self.window.output.addItem('Playback', 'playback.monitor')
+        self.window.model.setCurrentText('local-model')
+        self.window.send.return_value = False
+        self.window.start_capture()
+        self.assertFalse(self.window.running)
+        self.assertFalse(self.window.starting)
+        self.assertTrue(self.window.start.isEnabled())
+        self.assertIn('Worker failed', self.window.captions.placeholderText())
+
     def test_border_hides_on_focus_loss_and_returns_on_focus(self):
         self.window.show()
         self.assertNotIn('solid transparent', self.window.centralWidget().styleSheet())

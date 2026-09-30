@@ -50,6 +50,7 @@ class Window(QMainWindow):
         self.resize(int(self.settings.get('width', 900)), int(self.settings.get('height', 460)))
         self.closing = False
         self.running = False
+        self.starting = False
         self.stopping = False
         self.last_error = ''
         self.models = []
@@ -59,7 +60,7 @@ class Window(QMainWindow):
         self.process.readyReadStandardOutput.connect(self.read_events)
         self.process.readyReadStandardError.connect(lambda: self.process.readAllStandardError())
         self.process.finished.connect(self.finished)
-        self.process.errorOccurred.connect(lambda err: self.status.setText('Worker failed to start. Run setup.sh.'))
+        self.process.errorOccurred.connect(self.worker_error)
         layout = QVBoxLayout()
         wrapper = QWidget()
         wrapper.setObjectName('videoTransSurface')
@@ -199,6 +200,10 @@ class Window(QMainWindow):
         self.theme_timer.start(2000)
         self.send('outputs')
 
+    def set_status(self, text):
+        self.status.setText(text)
+        self.captions.setPlaceholderText(text)
+
     def showEvent(self, event):
         super().showEvent(event)
         self.border_focused = True
@@ -275,46 +280,60 @@ class Window(QMainWindow):
 
     def send(self, action):
         if self.stopping:
-            return
+            return False
         if action in ('start', 'models', 'suggest'):
             self.last_error = ''
         if self.process.state() == QProcess.NotRunning:
             self.buffer.clear()
             self.process.start(sys.executable, ['-u', str(Path(__file__).with_name('backend.py'))])
             if not self.process.waitForStarted(3000):
-                self.status.setText('Worker failed to start. Run setup.sh.')
-                return
+                self.set_status('Worker failed to start. Run setup.sh.')
+                return False
         data = dict(action=action, settings=self.current_settings(), token=self.token.text())
         self.process.write((json.dumps(data) + '\n').encode())
+        return True
+
+    def worker_error(self, error):
+        if error == QProcess.FailedToStart:
+            self.running = self.starting = False
+            self.start.setEnabled(True)
+            self.stop.setEnabled(False)
+            self.settings_widget.setEnabled(True)
+            self.set_status('Worker failed to start. Run setup.sh.')
 
     def refresh_models(self):
         self.save()
-        self.status.setText('Starting provider and discovering models…')
+        self.set_status('Starting provider and discovering models…')
         self.stop.setEnabled(True)
         self.send('models')
 
     def auto_select(self):
         self.save()
-        self.status.setText('Discovering local models and choosing a suggestion for the target language…')
+        self.set_status('Discovering local models and choosing a suggestion for the target language…')
         self.stop.setEnabled(True)
         self.send('suggest')
 
     def start_capture(self):
+        if self.running or self.stopping:
+            return
         if not self.output.currentData() or not self.model.currentText().strip():
-            self.status.setText('Select an audio input device and translation model first.')
+            self.set_status('Select an audio input device and translation model first.')
             return
         self.save()
         self.captions.document().setMaximumBlockCount(self.history.value())
         self.running = True
+        self.starting = True
+        self.set_status('Starting translation · loading Whisper and connecting to the provider…')
         self.start.setEnabled(False)
         self.stop.setEnabled(True)
         self.settings_widget.setEnabled(False)
         self.tabs.setCurrentIndex(0)
-        self.send('start')
+        if self.send('start') is False:
+            self.worker_error(QProcess.FailedToStart)
 
     def stop_capture(self):
         if self.process.state() != QProcess.NotRunning:
-            self.status.setText('Stopping capture and releasing models…')
+            self.set_status('Stopping capture and releasing models…')
             self.process.write(b'{"action":"stop"}\n')
             self.stopping = True
             self.start.setEnabled(False)
@@ -337,8 +356,11 @@ class Window(QMainWindow):
             except ValueError:
                 continue
             kind = event.get('type')
-            if kind in ('error', 'status'):
-                self.status.setText(event['message'])
+            if kind == 'started':
+                self.starting = False
+                self.set_status('Listening · waiting for speech from the selected audio device…')
+            elif kind in ('error', 'status'):
+                self.set_status(event['message'])
                 if kind == 'error':
                     self.last_error = event['message']
             elif kind == 'outputs':
@@ -364,7 +386,7 @@ class Window(QMainWindow):
                 self.model.clear()
                 self.model.addItems(event['models'])
                 self.model.setCurrentText(event['model'])
-                self.status.setText(event['reason'])
+                self.set_status(event['reason'])
                 self.save()
             elif kind == 'caption':
                 scroll = self.captions.verticalScrollBar()
@@ -377,10 +399,11 @@ class Window(QMainWindow):
                     scroll.setValue(scroll.maximum())
                 else:
                     scroll.setValue(position)
-                self.status.setText('Listening · detected ' + event['language'] + ' → ' + self.target.currentText())
+                self.set_status('Listening · detected ' + event['language'] + ' → ' + self.target.currentText())
 
     def finished(self, code, status):
         self.running = False
+        self.starting = False
         self.stopping = False
         self.start.setEnabled(True)
         self.stop.setEnabled(False)
@@ -389,11 +412,11 @@ class Window(QMainWindow):
             self.close()
             QApplication.instance().quit()
         elif code != 0:
-            self.status.setText('Worker exited unexpectedly. Check provider configuration and restart.')
+            self.set_status('Worker exited unexpectedly. Check provider configuration and restart.')
         elif self.last_error:
-            self.status.setText(self.last_error + ' · worker stopped')
+            self.set_status(self.last_error + ' · worker stopped')
         else:
-            self.status.setText('Stopped · speech worker exited; captions retained')
+            self.set_status('Stopped · speech worker exited; captions retained')
 
     def closeEvent(self, event):
         self.closing = True
@@ -411,7 +434,7 @@ class Window(QMainWindow):
     def snapshot(self):
         return dict(settings=self.current_settings(), models=self.models,
                     outputs=[dict(name=self.output.itemData(i), label=self.output.itemText(i)) for i in range(self.output.count())],
-                    running=self.running, stopping=self.stopping, overlay=self.isVisible(),
+                    running=self.running, starting=self.starting, stopping=self.stopping, overlay=self.isVisible(),
                     key_ready=bool(self.token.text()), remember_token=self.remember.isChecked(),
                     status=self.status.text())
 

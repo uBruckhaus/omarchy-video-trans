@@ -85,7 +85,7 @@ Ui.Panel {
         spacing: Style.spacing.md
         Ui.PanelHero {
           title: "Video Trans"
-          meta: root.translating ? "Translating · " + (root.config.target || "German") : "Live translated captions"
+          meta: root.sessionState.starting ? "Starting translation…" : root.translating ? "Translating · " + (root.config.target || "German") : "Live translated captions"
           iconComponent: Component { Text { text: "\uf20a"; font.family: Style.font.family; font.pixelSize: Style.font.display; color: Color.accent } }
         }
         Row {

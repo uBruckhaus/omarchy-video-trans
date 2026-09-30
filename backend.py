@@ -96,6 +96,7 @@ class Backend:
         self.speech = WhisperModel(settings['speech_model'], device='cpu', compute_type='int8', cpu_threads=4, local_files_only=True)
         if self.stop.is_set():
             return
+        emit('status', message='Speech model ready · connecting to the translation provider…')
         self.provider.ensure_service()
         command = capture_command(settings['output'], settings['noise_filter'], settings.get('audio_input', 'Audio output'))
         self.capture = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -128,8 +129,10 @@ class Backend:
 
         capture_thread = threading.Thread(target=reader, daemon=True)
         capture_thread.start()
+        emit('started')
         emit('status', message='Listening to ' + settings.get('audio_input', 'Audio output').lower() + '…')
         previous = ''
+        silent_seconds = 0
         tail = np.zeros(0, dtype=np.float32)
         while not self.stop.is_set():
             try:
@@ -143,7 +146,12 @@ class Backend:
             audio = np.frombuffer(data, dtype='<i2').astype(np.float32) / 32768.0
             if not len(audio) or float(np.sqrt(np.mean(audio * audio))) < 0.002:
                 tail = np.zeros(0, dtype=np.float32)
+                silent_seconds += len(audio) / 16000
+                if silent_seconds >= 10:
+                    emit('status', message='No audio on the selected device. Select the output your video is playing through, and check that playback is unmuted.')
+                    silent_seconds = 0
                 continue
+            silent_seconds = 0
             overlap = len(tail) / 16000
             combined = np.concatenate((tail, audio))
             tail = audio[-12800:]
@@ -157,6 +165,8 @@ class Backend:
             if self.stop.is_set():
                 break
             if not text or text == previous:
+                if not text:
+                    emit('status', message='Audio received · no clear speech detected yet. Check the source-language setting or use auto.')
                 continue
             previous = text
             emit('status', message=f'Detected {info.language} ({info.language_probability:.0%}) · translating…')
