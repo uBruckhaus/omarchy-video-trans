@@ -33,7 +33,7 @@ For Omarchy's Lua Hyprland configuration, add to `~/.config/hypr/hyprland.lua`:
 
 ```lua
 -- Video Trans floating caption window
-o.window({ title = "^Video Trans — Live captions$" }, { float = true, pin = true, border_size = 0 })
+o.window({ title = "^Video Trans — Live captions$" }, { float = true, pin = true, border_size = 0, opacity = "1 1" })
 ```
 
 Then validate with `hyprctl reload` and `hyprctl configerrors`. The pinned window follows workspaces; position it above or below your video and resize with your normal Hyprland controls. It is a floating application window, not an embedded player subtitle track. Fullscreen stacking depends on your compositor; use a windowed/maximized video if your fullscreen player covers captions.

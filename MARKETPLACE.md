@@ -1,10 +1,15 @@
 # Marketplace submission draft
 
-**Name:** Video Trans  
-**ID:** `ubruckhaus.video-trans`  
-**Repository:** https://github.com/uBruckhaus/omarchy-video-trans  
-**Category:** Media  
-**Tags:** ai, media, bar, quickshell, captions, translation, whisper  
+**Name:** Video Trans
+
+**ID:** `ubruckhaus.video-trans`
+
+**Repository:** https://github.com/uBruckhaus/omarchy-video-trans
+
+**Category:** Media
+
+**Tags:** ai, media, bar, quickshell, captions, translation, whisper
+
 **Screenshot:** `preview.png` (synthetic captions)
 
 Live translated captions from audio output or an explicitly selected microphone. Local Whisper automatically detects speech language and filters non-speech. Choose llama.cpp, Ollama or an OpenAI-compatible online translator and model, with an automatic local-model suggestion based on your target language. Resizable floating captions with persistent scrollback, Omarchy theme defaults, background transparency and border controls, and cleanup on Stop/Close. German target by default.
