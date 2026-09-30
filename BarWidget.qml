@@ -1,7 +1,7 @@
 import QtQuick
-import qs.Ui
+import qs.Ui as Ui
 
-BarWidget {
+Ui.BarWidget {
   id: root
   moduleName: "ubruckhaus.video-trans"
   implicitWidth: button.implicitWidth
@@ -12,7 +12,7 @@ BarWidget {
   function close() { panel.close() }
   function closeForPopoutSwitch() { panel.closeForPopoutSwitch() }
   VideoTransPanel { id: panel; bar: root.bar; anchorItem: button; hostWidget: root }
-  BarIconButton {
+  Ui.BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
