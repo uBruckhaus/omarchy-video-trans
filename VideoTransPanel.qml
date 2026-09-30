@@ -117,7 +117,7 @@ Ui.Panel {
           Ui.PanelSectionHeader { text: "Model ID (manual entry)" }
           Ui.TextField { width: parent.width; text: root.config.model || ""; placeholderText: "Enter a provider model ID"; onEditingFinished: root.set("model", text) }
           Ui.PanelSectionHeader { text: "API key or bearer token" }
-          Ui.TextField { id: token; width: parent.width; password: true; placeholderText: root.sessionState.key_ready ? "Saved token available" : "Enter token" }
+          Ui.TextField { id: token; width: parent.width; password: true; placeholderText: root.sessionState.key_ready ? "Token configured" : "Enter token" }
           Ui.Toggle { id: remember; width: parent.width; label: "Save token locally"; checked: root.sessionState.remember_token === true; onClicked: { var desired = !checked; var next = Object.assign({}, root.sessionState); next.remember_token = desired; root.sessionState = next; root.request({action: "configure", remember_token: desired}) } }
           Ui.Button { text: "Apply token"; focusable: true; onClicked: { root.request({action: "configure", token: token.text, remember_token: remember.checked}); token.text = "" } }
           Ui.Dropdown { width: parent.width; label: "Source language"; options: ["auto", "en", "de", "fr", "es", "it", "ja", "zh", "ko", "ru", "ar"]; value: root.config.source || "auto"; onChanged: root.set("source", value) }
