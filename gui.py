@@ -6,13 +6,36 @@ import signal
 import sys
 
 from PySide6.QtCore import QProcess, QTimer, Qt
-from PySide6.QtGui import QFont, QPalette, QColor
+from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QScrollArea,
-    QPushButton, QSizeGrip, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
+    QPushButton, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
 from core import CONFIG, LANGUAGES, load_settings, save_json, read_theme
+
+
+class ResizeGrip(QWidget):
+    """Always visible grip using compositor-native resizing on Wayland."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.SizeFDiagCursor)
+        self.setToolTip('Drag to resize captions')
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setPen(QPen(self.palette().color(QPalette.WindowText), 2))
+        for offset in (7, 13, 19):
+            painter.drawLine(26 - offset, 24, 24, 26 - offset)
+
+    def mousePressEvent(self, event):
+        handle = self.window().windowHandle()
+        if event.button() == Qt.LeftButton and handle is not None:
+            if handle.startSystemResize(Qt.RightEdge | Qt.BottomEdge):
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
 
 class Window(QMainWindow):
@@ -56,15 +79,15 @@ class Window(QMainWindow):
         for item in (self.start, self.stop, self.compact, clear, self.scroll):
             buttons.addWidget(item)
         # Translation controls belong to the native Omarchy popup. The Qt
-        # window contains only captions and reading controls.
+        # window contains only captions and a resize handle.
         self.start.hide()
         self.stop.hide()
         self.compact.hide()
-        layout.addLayout(buttons)
+        clear.hide()
+        self.scroll.hide()
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
-        self.resize_grip = QSizeGrip(wrapper)
-        self.resize_grip.setToolTip('Drag to resize captions')
+        self.resize_grip = ResizeGrip(wrapper)
         layout.addWidget(self.resize_grip, 0, Qt.AlignRight)
         self.captions = QTextEdit()
         self.captions.setObjectName('videoTransCaptions')
@@ -198,6 +221,7 @@ class Window(QMainWindow):
             f'QWidget#videoTransSurface {{ background: rgba({background.red()}, {background.green()}, {background.blue()}, {alpha}); '
             f'border: {width}px solid {theme["border_color"]}; }} '
             f'QTextEdit#videoTransCaptions {{ background: transparent; color: {foreground.name()}; border: none; padding: 12px; }} '
+            'QWidget#videoTransSurface > QWidget { background: transparent; } '
             f'QLabel, QCheckBox {{ color: {foreground.name()}; }} '
             'QTabWidget::pane { background: transparent; border: none; }')
         self.captions.viewport().setAutoFillBackground(False)

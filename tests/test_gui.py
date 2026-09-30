@@ -69,14 +69,24 @@ class WindowTests(unittest.TestCase):
         self.assertIn('Provider unavailable', self.window.status.text())
 
     def test_theme_defaults_and_custom_border_transparency(self):
-        self.assertEqual(self.window.transparency.value(), -1)
-        self.assertEqual(self.window.border_width.value(), -1)
+        self.assertEqual(self.window.transparency.value(), 100)
+        self.assertEqual(self.window.border_width.value(), 1)
         self.window.transparency.setValue(75)
         self.window.border_width.setValue(6)
         settings = self.window.current_settings()
         self.assertEqual(settings['background_transparency'], 75)
         self.assertEqual(settings['border_width'], 6)
         self.assertIn('border: 6px', self.window.centralWidget().styleSheet())
+
+    def test_pause_keeps_previous_captions(self):
+        self.event(dict(type='caption', timestamp='12:00', language='en', text='Erster Satz.'))
+        before = self.window.captions.toPlainText()
+        self.event(dict(type='status', message='Listening'))
+        APP.processEvents()
+        self.assertEqual(self.window.captions.toPlainText(), before)
+        self.event(dict(type='caption', timestamp='12:01', language='en', text='Nächster Satz.'))
+        self.assertIn('Erster Satz.', self.window.captions.toPlainText())
+        self.assertIn('Nächster Satz.', self.window.captions.toPlainText())
 
     def test_suggestion_updates_selected_local_provider_and_model(self):
         self.event(dict(type='suggestion', provider='Ollama', endpoint='http://127.0.0.1:11434',
@@ -89,6 +99,8 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(self.window.start.isHidden())
         self.assertTrue(self.window.stop.isHidden())
         self.assertTrue(self.window.compact.isHidden())
+        self.assertTrue(self.window.scroll.isHidden())
+        self.assertFalse(any(button.isVisibleTo(self.window) for button in self.window.findChildren(gui.QPushButton)))
 
     def test_ipc_snapshot_never_exposes_token(self):
         self.window.token.setText('private-online-token')
@@ -131,6 +143,16 @@ class WindowTests(unittest.TestCase):
         self.window.resize(650, 350)
         self.assertEqual((self.window.width(), self.window.height()), (650, 350))
         self.assertTrue(self.window.resize_grip.isVisible())
+
+    def test_resize_handle_requests_native_compositor_resize(self):
+        event = Mock()
+        event.button.return_value = gui.Qt.LeftButton
+        handle = Mock()
+        handle.startSystemResize.return_value = True
+        with patch.object(self.window, 'windowHandle', return_value=handle):
+            self.window.resize_grip.mousePressEvent(event)
+        handle.startSystemResize.assert_called_once_with(gui.Qt.RightEdge | gui.Qt.BottomEdge)
+        event.accept.assert_called_once()
 
 
 if __name__ == '__main__':

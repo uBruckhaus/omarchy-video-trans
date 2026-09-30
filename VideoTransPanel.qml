@@ -92,7 +92,9 @@ Ui.Panel {
           spacing: Style.spacing.md
           Ui.Button { text: root.translating ? "Stop" : "Start"; bordered: true; focusable: true; enabled: root.loaded && !root.stopping && !root.busy; onClicked: root.request({action: root.translating ? "stop" : "start"}) }
           Ui.Button { text: "Show captions"; bordered: true; focusable: true; onClicked: root.request({action: "show"}) }
+          Ui.Button { text: "Clear captions"; focusable: true; onClicked: root.request({action: "clear"}) }
         }
+        Ui.Toggle { width: parent.width; label: "Follow new captions"; checked: root.config.auto_scroll !== false; onClicked: root.set("auto_scroll", !checked) }
         Text { width: parent.width; text: root.message; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.caption }
         Ui.PanelSeparator {}
         Ui.PanelSectionHeader { text: "Speech and audio" }
@@ -134,9 +136,7 @@ Ui.Panel {
           Ui.NumberField { label: "Background transparency (%)"; from: -1; to: 100; value: root.config.background_transparency === undefined ? -1 : root.config.background_transparency; onModified: root.set("background_transparency", value) }
           Ui.NumberField { label: "Border thickness (px)"; from: -1; to: 16; value: root.config.border_width === undefined ? -1 : root.config.border_width; onModified: root.set("border_width", value) }
           Ui.NumberField { label: "Retained caption paragraphs"; from: 50; to: 5000; value: root.config.history_lines || 500; onModified: root.set("history_lines", value) }
-          Ui.Toggle { width: parent.width; label: "Follow new captions"; checked: root.config.auto_scroll !== false; onClicked: root.set("auto_scroll", !checked) }
           Row { spacing: Style.spacing.md
-            Ui.Button { text: "Clear captions"; focusable: true; onClicked: root.request({action: "clear"}) }
             Ui.Button { text: "Close overlay"; focusable: true; onClicked: root.request({action: "close"}) }
           }
         }
