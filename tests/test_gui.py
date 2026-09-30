@@ -88,6 +88,19 @@ class WindowTests(unittest.TestCase):
         self.assertIn('Erster Satz.', self.window.captions.toPlainText())
         self.assertIn('Nächster Satz.', self.window.captions.toPlainText())
 
+    def test_border_hides_on_focus_loss_and_returns_on_focus(self):
+        self.window.show()
+        self.assertNotIn('solid transparent', self.window.centralWidget().styleSheet())
+        event = gui.QEvent(gui.QEvent.ActivationChange)
+        with patch.object(self.window, 'isActiveWindow', return_value=False):
+            self.window.changeEvent(event)
+        self.assertIn('border: 1px solid transparent', self.window.centralWidget().styleSheet())
+        self.window.apply_appearance()
+        self.assertIn('border: 1px solid transparent', self.window.centralWidget().styleSheet())
+        with patch.object(self.window, 'isActiveWindow', return_value=True):
+            self.window.changeEvent(event)
+        self.assertNotIn('solid transparent', self.window.centralWidget().styleSheet())
+
     def test_suggestion_updates_selected_local_provider_and_model(self):
         self.event(dict(type='suggestion', provider='Ollama', endpoint='http://127.0.0.1:11434',
                         models=['qwen3:4b'], model='qwen3:4b', reason='Suggested model'))

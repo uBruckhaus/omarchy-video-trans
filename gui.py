@@ -5,7 +5,7 @@ from pathlib import Path
 import signal
 import sys
 
-from PySide6.QtCore import QProcess, QTimer, Qt
+from PySide6.QtCore import QEvent, QProcess, QTimer, Qt
 from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
@@ -42,6 +42,7 @@ class Window(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Video Trans — Live captions')
+        self.border_focused = True
         self.resize(900, 460)
         self.setMinimumSize(430, 230)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -198,6 +199,17 @@ class Window(QMainWindow):
         self.theme_timer.start(2000)
         self.send('outputs')
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.border_focused = True
+        self.apply_appearance()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.ActivationChange and hasattr(self, 'border_width'):
+            self.border_focused = self.isActiveWindow()
+            self.apply_appearance()
+
     def apply_appearance(self):
         self.captions.setFont(QFont('sans-serif', self.font_size.value()))
         theme = read_theme()
@@ -217,9 +229,10 @@ class Window(QMainWindow):
         if width < 0:
             width = theme['border_width']
         alpha = round(255 * (100 - transparency) / 100)
+        border_color = theme['border_color'] if self.border_focused else 'transparent'
         self.centralWidget().setStyleSheet(
             f'QWidget#videoTransSurface {{ background: rgba({background.red()}, {background.green()}, {background.blue()}, {alpha}); '
-            f'border: {width}px solid {theme["border_color"]}; }} '
+            f'border: {width}px solid {border_color}; }} '
             f'QTextEdit#videoTransCaptions {{ background: transparent; color: {foreground.name()}; border: none; padding: 12px; }} '
             'QWidget#videoTransSurface > QWidget { background: transparent; } '
             f'QLabel, QCheckBox {{ color: {foreground.name()}; }} '
