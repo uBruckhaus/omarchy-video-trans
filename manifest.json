@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "ubruckhaus.video-trans",
+  "name": "Video Trans",
+  "version": "0.1.0",
+  "author": "uBruckhaus",
+  "license": "MIT",
+  "description": "Live captions from audio output or microphone, with local Whisper and llama.cpp, Ollama or online translation.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "BarWidget.qml"},
+  "barWidget": {"displayName": "Video Trans", "category": "Media", "defaultSection": "right", "allowMultiple": false}
+}
