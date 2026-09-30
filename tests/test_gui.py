@@ -115,6 +115,23 @@ class WindowTests(unittest.TestCase):
             self.window.handle_request({'action': 'release'})
             close.assert_called_once()
 
+    def test_panel_stop_closes_overlay_and_requests_worker_cleanup(self):
+        self.window.show()
+        self.window.process = Mock()
+        self.window.process.state.return_value = gui.QProcess.Running
+        state = self.window.handle_request({'action': 'stop'})
+        self.assertFalse(state['overlay'])
+        self.assertTrue(self.window.closing)
+        self.window.process.write.assert_called_once_with(b'{"action":"stop"}\n')
+
+    def test_overlay_can_resize_in_both_dimensions(self):
+        self.window.show()
+        self.window.resize(1100, 600)
+        self.assertEqual((self.window.width(), self.window.height()), (1100, 600))
+        self.window.resize(650, 350)
+        self.assertEqual((self.window.width(), self.window.height()), (650, 350))
+        self.assertTrue(self.window.resize_grip.isVisible())
+
 
 if __name__ == '__main__':
     unittest.main()

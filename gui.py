@@ -10,7 +10,7 @@ from PySide6.QtGui import QFont, QPalette, QColor
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QScrollArea,
-    QPushButton, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
+    QPushButton, QSizeGrip, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
 from core import CONFIG, LANGUAGES, load_settings, save_json, read_theme
 
@@ -63,6 +63,9 @@ class Window(QMainWindow):
         layout.addLayout(buttons)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
+        self.resize_grip = QSizeGrip(wrapper)
+        self.resize_grip.setToolTip('Drag to resize captions')
+        layout.addWidget(self.resize_grip, 0, Qt.AlignRight)
         self.captions = QTextEdit()
         self.captions.setObjectName('videoTransCaptions')
         self.captions.setReadOnly(True)
@@ -426,7 +429,7 @@ class Window(QMainWindow):
             self.show()
             self.start_capture()
         elif action == 'stop':
-            self.stop_capture()
+            self.close()
         elif action == 'models':
             self.refresh_models()
         elif action == 'suggest':

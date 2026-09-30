@@ -39,7 +39,7 @@ def main():
             assert request({'action': 'show'})['overlay']
             assert request({'action': 'release'})['overlay']
             assert process.poll() is None
-            request({'action': 'close'})
+            assert not request({'action': 'stop'})['overlay']
             process.wait(timeout=10)
             assert process.returncode == 0
             print('Native-panel IPC, private token handling, independent overlay and cleanup: OK')
