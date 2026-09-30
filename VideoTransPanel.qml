@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -22,6 +23,7 @@ Ui.Panel {
   property bool loaded: false
   readonly property bool translating: sessionState.running === true
   readonly property bool stopping: sessionState.stopping === true
+  readonly property bool downloading: sessionState.downloading === true
   readonly property bool busy: bridge.running && currentRequest.action !== "state"
   function open() { controller.show(); request({action: "state"}) }
   function close() { controller.hide(); request({action: "release"}) }
@@ -70,13 +72,14 @@ Ui.Panel {
     owner: root.hostWidget || root
     open: root.opened
     contentWidth: fittedContentWidth(Style.space(460))
-    contentHeight: cappedContentHeight(Style.space(640))
+    contentHeight: fittedContentHeight(content.implicitHeight)
     Flickable {
       anchors.fill: parent
       contentWidth: width
       contentHeight: content.implicitHeight
       clip: true
       boundsBehavior: Flickable.StopAtBounds
+      Controls.ScrollBar.vertical: Controls.ScrollBar { policy: Controls.ScrollBar.AsNeeded }
       Column {
         id: content
         focus: root.opened
@@ -90,30 +93,48 @@ Ui.Panel {
         }
         Row {
           spacing: Style.spacing.md
-          Ui.Button { text: root.translating ? "Stop" : "Start"; bordered: true; focusable: true; enabled: root.loaded && !root.stopping && !root.busy; onClicked: root.request({action: root.translating ? "stop" : "start"}) }
+          Ui.Button { text: root.translating ? "Stop" : "Start"; bordered: true; focusable: true; enabled: root.loaded && !root.stopping && !root.busy && !root.downloading; onClicked: root.request({action: root.translating ? "stop" : "start"}) }
           Ui.Button { text: "Show captions"; bordered: true; focusable: true; onClicked: root.request({action: "show"}) }
           Ui.Button { text: "Clear captions"; focusable: true; onClicked: root.request({action: "clear"}) }
         }
         Ui.Toggle { width: parent.width; label: "Follow new captions"; checked: root.config.auto_scroll !== false; onClicked: root.set("auto_scroll", !checked) }
         Text { width: parent.width; text: root.message; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+        Column {
+          width: parent.width
+          spacing: Style.spacing.sm
+          visible: (root.sessionState.checks || []).length > 0
+          Ui.PanelSectionHeader { text: "Startup check" }
+          Repeater {
+            model: root.sessionState.checks || []
+            delegate: Row {
+              required property var modelData
+              width: parent.width
+              spacing: Style.spacing.sm
+              Text { width: Style.space(20); text: modelData.status === "checking" ? "…" : "✓"; color: modelData.status === "ok" ? "#66c98b" : modelData.status === "error" ? "#f16b72" : Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.body }
+              Text { width: parent.width - Style.space(28); text: modelData.label + ": " + modelData.detail; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+            }
+          }
+        }
         Ui.PanelSeparator {}
         Ui.PanelSectionHeader { text: "Speech and audio" }
-        Ui.Dropdown { width: parent.width; label: "Speech provider"; options: ["Whisper (local)"]; value: "Whisper (local)"; enabled: !root.translating }
-        Ui.Dropdown { width: parent.width; label: "Input"; options: ["Audio output", "Microphone"]; value: root.config.audio_input || "Audio output"; enabled: !root.translating; onChanged: { root.set("audio_input", value); root.request({action: "outputs"}) } }
-        Ui.Dropdown { width: parent.width; label: "Device"; options: root.deviceOptions; value: root.config.output || ""; enabled: !root.translating; onChanged: root.set("output", value) }
-        Ui.Dropdown { width: parent.width; label: "Target language"; options: ["German", "English", "French", "Spanish", "Italian", "Portuguese", "Dutch", "Polish", "Ukrainian", "Russian", "Japanese", "Chinese", "Korean", "Arabic", "Hindi", "Turkish", "Indonesian", "Vietnamese"]; value: root.config.target || "German"; enabled: !root.translating; onChanged: root.set("target", value) }
+        Ui.Dropdown { width: parent.width; label: "Speech provider"; options: ["Whisper (local)"]; value: "Whisper (local)"; enabled: !root.translating && !root.downloading }
+        Ui.Dropdown { width: parent.width; label: "Whisper model"; options: [{value: "tiny", label: "Tiny"}, {value: "base", label: "Base"}, {value: "small", label: "Small"}, {value: "medium", label: "Medium"}, {value: "large-v3", label: "Large (big, v3)"}, {value: "turbo", label: "Turbo"}]; value: root.config.speech_model || "small"; enabled: !root.translating && !root.downloading; onChanged: root.set("speech_model", value) }
+        Ui.Button { text: root.downloading ? "Cancel Whisper download" : "Download selected Whisper model"; focusable: true; enabled: !root.translating && !root.stopping && !root.busy; onClicked: root.request({action: root.downloading ? "cancel-download" : "download"}) }
+        Ui.Dropdown { width: parent.width; label: "Input"; options: ["Audio output", "Microphone"]; value: root.config.audio_input || "Audio output"; enabled: !root.translating && !root.downloading; onChanged: { root.set("audio_input", value); root.request({action: "outputs"}) } }
+        Ui.Dropdown { width: parent.width; label: "Device"; options: root.deviceOptions; value: root.config.output || ""; enabled: !root.translating && !root.downloading; onChanged: root.set("output", value) }
+        Ui.Dropdown { width: parent.width; label: "Target language"; options: ["German", "English", "French", "Spanish", "Italian", "Portuguese", "Dutch", "Polish", "Ukrainian", "Russian", "Japanese", "Chinese", "Korean", "Arabic", "Hindi", "Turkish", "Indonesian", "Vietnamese"]; value: root.config.target || "German"; enabled: !root.translating && !root.downloading; onChanged: root.set("target", value) }
         Ui.PanelSeparator {}
         Ui.PanelSectionHeader { text: "Translation" }
-        Ui.Dropdown { width: parent.width; label: "Provider"; options: ["llama.cpp", "Ollama", "Online"]; value: root.config.provider || "llama.cpp"; enabled: !root.translating; onChanged: root.selectProvider(value) }
-        Ui.Dropdown { width: parent.width; label: "Model"; options: root.modelOptions.length ? root.modelOptions : [root.config.model || "Select a model"]; value: root.config.model || ""; enabled: !root.translating; onChanged: root.set("model", value) }
+        Ui.Dropdown { width: parent.width; label: "Provider"; options: ["llama.cpp", "Ollama", "Online"]; value: root.config.provider || "llama.cpp"; enabled: !root.translating && !root.downloading; onChanged: root.selectProvider(value) }
+        Ui.Dropdown { width: parent.width; label: "Model"; options: root.modelOptions.length ? root.modelOptions : [root.config.model || "Select a model"]; value: root.config.model || ""; enabled: !root.translating && !root.downloading; onChanged: root.set("model", value) }
         Row {
           spacing: Style.spacing.md
-          Ui.Button { text: "Refresh models"; focusable: true; enabled: !root.translating && !root.busy; onClicked: root.request({action: "models"}) }
-          Ui.Button { text: "Auto-select local"; focusable: true; enabled: !root.translating && !root.busy; onClicked: root.request({action: "suggest"}) }
+          Ui.Button { text: "Refresh models"; focusable: true; enabled: !root.translating && !root.downloading && !root.busy; onClicked: root.request({action: "models"}) }
+          Ui.Button { text: "Auto-select local"; focusable: true; enabled: !root.translating && !root.downloading && !root.busy; onClicked: root.request({action: "suggest"}) }
         }
         Ui.Button { width: parent.width; text: root.advanced ? "▾ Provider and recognition settings" : "▸ Provider and recognition settings"; leftAlign: true; focusable: true; onClicked: root.advanced = !root.advanced }
         Column {
-          width: parent.width; visible: root.advanced; spacing: Style.spacing.md; enabled: !root.translating
+          width: parent.width; visible: root.advanced; spacing: Style.spacing.md; enabled: !root.translating && !root.downloading
           Ui.PanelSectionHeader { text: "Endpoint" }
           Ui.TextField { width: parent.width; text: root.config.endpoint || ""; placeholderText: "Provider base URL"; onEditingFinished: root.set("endpoint", text) }
           Ui.PanelSectionHeader { text: "Model ID (manual entry)" }
@@ -123,7 +144,6 @@ Ui.Panel {
           Ui.Toggle { id: remember; width: parent.width; label: "Save token locally"; checked: root.sessionState.remember_token === true; onClicked: { var desired = !checked; var next = Object.assign({}, root.sessionState); next.remember_token = desired; root.sessionState = next; root.request({action: "configure", remember_token: desired}) } }
           Ui.Button { text: "Apply token"; focusable: true; onClicked: { root.request({action: "configure", token: token.text, remember_token: remember.checked}); token.text = "" } }
           Ui.Dropdown { width: parent.width; label: "Source language"; options: ["auto", "en", "de", "fr", "es", "it", "ja", "zh", "ko", "ru", "ar"]; value: root.config.source || "auto"; onChanged: root.set("source", value) }
-          Ui.Dropdown { width: parent.width; label: "Whisper model"; options: ["tiny", "base", "small", "medium", "large-v3", "turbo"]; value: root.config.speech_model || "small"; onChanged: root.set("speech_model", value) }
           Ui.Toggle { width: parent.width; label: "Noise suppression"; checked: root.config.noise_filter !== false; onClicked: root.set("noise_filter", !checked) }
           Ui.NumberField { label: "Audio chunk (seconds)"; from: 3; to: 15; value: root.config.chunk_seconds || 5; onModified: root.set("chunk_seconds", value) }
         }

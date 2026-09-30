@@ -2,8 +2,8 @@
 set -euo pipefail
 source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 runtime_dir="${XDG_DATA_HOME:-$HOME/.local/share}/video-trans/runtime"
-for dependency in ffmpeg pactl; do
-  command -v "$dependency" >/dev/null || { echo "Missing $dependency. Install with: omarchy pkg add ffmpeg libpulse" >&2; exit 1; }
+for dependency in ffmpeg pactl quickshell; do
+  command -v "$dependency" >/dev/null || { echo "Missing $dependency. Install with: omarchy pkg add ffmpeg libpulse quickshell" >&2; exit 1; }
 done
 if command -v uv >/dev/null; then
   if [[ ! -x "$runtime_dir/bin/python" ]]; then

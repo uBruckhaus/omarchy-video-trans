@@ -1,13 +1,15 @@
 """Disposable worker process. Models never live in the GUI or Omarchy shell."""
 import json
+import importlib.util
 import queue
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
 
-from core import Provider, capture_command, audio_devices, local_provider_choice, suggest_model
+from core import Provider, LANGUAGES, capture_command, audio_devices, local_provider_choice, suggest_model
 
 
 def emit(kind, **values):
@@ -72,12 +74,63 @@ class Backend:
             self.provider.settings = settings
         return settings
 
-    def run_capture(self, settings):
-        import numpy as np
-        from faster_whisper import WhisperModel
-        if not settings['model']:
-            raise ValueError('Select a translation model before starting.')
-        emit('status', message='Loading speech model (first use downloads it)…')
+    def check(self, key, label, status, detail):
+        emit('check', id=key, label=label, status=status, detail=detail)
+
+    def quick_check(self, command):
+        settings = command['settings']
+        errors = []
+        target_ok = settings['target'] in LANGUAGES
+        self.check('target', 'Target language', 'ok' if target_ok else 'error', settings['target'])
+        if not target_ok:
+            errors.append('Select a supported target language.')
+        try:
+            if not shutil.which('ffmpeg') or not shutil.which('pactl'):
+                raise ValueError('Install ffmpeg and libpulse before starting.')
+            capture_command(settings['output'], settings['noise_filter'], settings.get('audio_input', 'Audio output'))
+            self.check('audio', 'Audio capture', 'ok', settings.get('audio_input', 'Audio output') + ' device available')
+        except (ValueError, subprocess.SubprocessError, OSError) as exc:
+            self.check('audio', 'Audio capture', 'error', str(exc))
+            errors.append('Audio capture is unavailable.')
+        whisper_ok = all(importlib.util.find_spec(name) is not None for name in ('faster_whisper', 'numpy', 'av'))
+        source_ok = not (settings['speech_model'].endswith('.en') and settings['source'] != 'en')
+        if not whisper_ok or not source_ok:
+            detail = 'Run setup.sh to install Whisper.' if not whisper_ok else 'Choose a multilingual Whisper model for automatic language detection, or set the source to en.'
+            self.check('whisper', 'Whisper', 'error', detail)
+            errors.append(detail)
+        else:
+            self.check('whisper', 'Whisper', 'checking', settings['speech_model'] + ' · checking/loading speech model')
+        if errors:
+            raise ValueError(' '.join(errors))
+        try:
+            self.configure(command)
+            previous_timeout = self.provider.client.timeout
+            import httpx
+            self.provider.client.timeout = httpx.Timeout(5)
+            try:
+                models = self.provider.models()
+            finally:
+                self.provider.client.timeout = previous_timeout
+            self.check('provider', 'Translation provider', 'ok', settings['provider'] + ' · reachable')
+        except Exception as exc:
+            status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
+            if settings['provider'] == 'Online' and status_code in (404, 405, 501):
+                self.check('provider', 'Translation provider', 'checking', 'Online endpoint configured; verified by the first translation')
+                self.check('model', 'Translation model', 'checking', settings['model'] + ' · verified by the first translation')
+                if not settings['model']:
+                    raise ValueError('Select an online translation model.')
+                return
+            detail = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else ('Authentication failed; check your API key or bearer token.' if status_code in (401, 403) else 'Provider is unavailable; check its endpoint and service.')
+            self.check('provider', 'Translation provider', 'error', detail)
+            self.check('model', 'Translation model', 'error', 'Could not verify the configured model')
+            raise ValueError(detail) from None
+        if settings['model'] not in models:
+            self.check('model', 'Translation model', 'error', settings['model'] + ' · not available from this provider')
+            raise ValueError('The selected translation model is unavailable. Refresh models or use Auto-select local.')
+        self.check('model', 'Translation model', 'ok', settings['model'])
+
+    def download_speech(self, settings):
+        emit('status', message='Downloading/checking Whisper ' + settings['speech_model'] + '…')
         # Downloads are cancellable children; closing during first-run setup must
         # not leave a network download or a provider service alive.
         self.download = subprocess.Popen([
@@ -90,10 +143,23 @@ class Backend:
             if self.stop.wait(0.2):
                 return
         if self.download.returncode:
+            self.check('whisper', 'Whisper', 'error', 'Speech model download/load failed')
             raise RuntimeError('Speech model download/load failed. Check internet access, disk space or the model name.')
         self.download = None
+        self.check('whisper', 'Whisper', 'ok', settings['speech_model'] + ' · downloaded and ready')
+
+    def run_capture(self, settings):
+        import numpy as np
+        from faster_whisper import WhisperModel
+        if not settings['model']:
+            raise ValueError('Select a translation model before starting.')
+        emit('status', message='Loading speech model (first use downloads it)…')
+        self.download_speech(settings)
+        if self.stop.is_set():
+            return
         # CPU int8 leaves the local GPU available to llama.cpp / Ollama.
         self.speech = WhisperModel(settings['speech_model'], device='cpu', compute_type='int8', cpu_threads=4, local_files_only=True)
+        self.check('whisper', 'Whisper', 'ok', settings['speech_model'] + ' · ready')
         if self.stop.is_set():
             return
         emit('status', message='Speech model ready · connecting to the translation provider…')
@@ -171,6 +237,9 @@ class Backend:
             previous = text
             emit('status', message=f'Detected {info.language} ({info.language_probability:.0%}) · translating…')
             translated = self.provider.translate(text, info.language)
+            if self.provider.kind == 'Online':
+                self.check('provider', 'Translation provider', 'ok', 'Online · translation request succeeded')
+                self.check('model', 'Translation model', 'ok', settings['model'])
             if not self.stop.is_set():
                 emit('caption', source=text, language=info.language, text=translated, timestamp=time.strftime('%H:%M:%S'))
 
@@ -204,8 +273,17 @@ class Backend:
                     models = self.provider.models()
                     model, reason = suggest_model(models, settings['target'])
                     emit('suggestion', models=models, model=model, provider=selected, endpoint=settings['endpoint'], reason=reason)
+                elif action == 'download':
+                    self.download_speech(command['settings'])
+                    if self.stop.is_set():
+                        self.cleanup()
+                        emit('stopped')
+                        return
+                    emit('downloaded', model=command['settings']['speech_model'])
                 elif action == 'start':
-                    settings = self.configure(command)
+                    emit('status', message='Checking startup requirements…')
+                    self.quick_check(command)
+                    settings = command['settings']
                     self.run_capture(settings)
                     self.cleanup()
                     emit('stopped')
@@ -218,7 +296,7 @@ class Backend:
                 # Never expose provider response bodies or Authorization headers.
                 message = str(exc) if isinstance(exc, (ValueError, RuntimeError, FileNotFoundError)) else type(exc).__name__
                 emit('error', message=message)
-                if action in ('start', 'models', 'suggest'):
+                if action in ('start', 'models', 'suggest', 'download'):
                     self.cleanup()
                     emit('stopped')
                     return

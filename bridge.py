@@ -44,7 +44,7 @@ def offline_state():
     except (OSError, ValueError):
         pass
     key = settings['provider'] + ' ' + settings['endpoint'].strip().rstrip('/')
-    return dict(settings=settings, models=[], outputs=outputs, running=False, stopping=False,
+    return dict(settings=settings, models=[], outputs=outputs, checks=[], running=False, starting=False, downloading=False, stopping=False,
                 overlay=False, status=status, key_ready=bool(tokens.get(key)), remember_token=bool(tokens.get(key)))
 
 

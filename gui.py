@@ -5,7 +5,7 @@ from pathlib import Path
 import signal
 import sys
 
-from PySide6.QtCore import QEvent, QProcess, QTimer, Qt
+from PySide6.QtCore import QEvent, QProcess, QProcessEnvironment, QTimer, Qt
 from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
@@ -43,6 +43,10 @@ class Window(QMainWindow):
         super().__init__()
         self.setWindowTitle('Video Trans — Live captions')
         self.border_focused = True
+        self.layer_mode = False
+        self.layer_open = False
+        self.layer_process = QProcess(self)
+        self.layer_process.finished.connect(self.layer_finished)
         self.resize(900, 460)
         self.setMinimumSize(430, 230)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -51,9 +55,11 @@ class Window(QMainWindow):
         self.closing = False
         self.running = False
         self.starting = False
+        self.downloading = False
         self.stopping = False
         self.last_error = ''
         self.models = []
+        self.checks = []
         self.buffer = bytearray()
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.SeparateChannels)
@@ -204,6 +210,43 @@ class Window(QMainWindow):
         self.status.setText(text)
         self.captions.setPlaceholderText(text)
 
+    def overlay_visible(self):
+        return self.layer_open if self.layer_mode else self.isVisible()
+
+    def show_overlay(self):
+        if not self.layer_mode:
+            self.show()
+            return
+        self.layer_open = True
+        if self.layer_process.state() != QProcess.NotRunning:
+            return
+        from bridge import socket_path
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert('VIDEO_TRANS_SOCKET', socket_path())
+        self.layer_process.setProcessEnvironment(environment)
+        self.layer_process.start('quickshell', ['-p', str(Path(__file__).with_name('overlay') / 'shell.qml')])
+        if not self.layer_process.waitForStarted(3000):
+            self.layer_open = False
+            self.set_status('Could not start the fullscreen caption overlay. Check that quickshell is installed.')
+
+    def layer_finished(self, code, status):
+        if self.layer_open and not self.closing:
+            self.layer_open = False
+            self.set_status('Caption overlay exited. Press Show captions to reopen it.')
+            if self.running:
+                self.last_error = 'Caption overlay exited unexpectedly'
+                self.stop_capture()
+
+    def overlay_state(self):
+        theme = read_theme()
+        transparency = self.transparency.value()
+        width = self.border_width.value()
+        return dict(open=self.layer_open, text=self.captions.toPlainText(), status=self.status.text(),
+                    theme=theme, font_size=self.font_size.value(), auto_scroll=self.scroll.isChecked(),
+                    background_transparency=theme['background_transparency'] if transparency < 0 else transparency,
+                    border_width=theme['border_width'] if width < 0 else width,
+                    width=self.width(), height=self.height())
+
     def showEvent(self, event):
         super().showEvent(event)
         self.border_focused = True
@@ -296,6 +339,7 @@ class Window(QMainWindow):
     def worker_error(self, error):
         if error == QProcess.FailedToStart:
             self.running = self.starting = False
+            self.downloading = False
             self.start.setEnabled(True)
             self.stop.setEnabled(False)
             self.settings_widget.setEnabled(True)
@@ -314,9 +358,17 @@ class Window(QMainWindow):
         self.send('suggest')
 
     def start_capture(self):
-        if self.running or self.stopping:
+        if self.running or self.stopping or self.downloading:
             return
+        self.checks = [dict(id=key, label=label, status='checking', detail='Checking…') for key, label in
+                       [('target', 'Target language'), ('audio', 'Audio capture'), ('whisper', 'Whisper'),
+                        ('provider', 'Translation provider'), ('model', 'Translation model')]]
         if not self.output.currentData() or not self.model.currentText().strip():
+            for item in self.checks:
+                if item['id'] == 'audio' and not self.output.currentData():
+                    item.update(status='error', detail='Select an audio input device')
+                elif item['id'] == 'model' and not self.model.currentText().strip():
+                    item.update(status='error', detail='Select a translation model')
             self.set_status('Select an audio input device and translation model first.')
             return
         self.save()
@@ -339,6 +391,15 @@ class Window(QMainWindow):
             self.start.setEnabled(False)
             self.stop.setEnabled(False)
 
+    def download_whisper(self):
+        if self.running or self.stopping or self.downloading:
+            return
+        self.save()
+        self.downloading = True
+        self.set_status('Downloading/checking Whisper ' + self.speech_model.currentText() + '…')
+        if self.send('download') is False:
+            self.downloading = False
+
     def toggle_compact(self):
         compact = self.tabs.isTabVisible(1)
         self.tabs.setTabVisible(1, not compact)
@@ -356,7 +417,16 @@ class Window(QMainWindow):
             except ValueError:
                 continue
             kind = event.get('type')
-            if kind == 'started':
+            if kind == 'check':
+                row = {key: event[key] for key in ('id', 'label', 'status', 'detail')}
+                if any(item['id'] == row['id'] for item in self.checks):
+                    self.checks = [row if item['id'] == row['id'] else item for item in self.checks]
+                else:
+                    self.checks.append(row)
+            elif kind == 'downloaded':
+                self.downloading = False
+                self.set_status('Whisper ' + event['model'] + ' downloaded and ready. Press Start to translate.')
+            elif kind == 'started':
                 self.starting = False
                 self.set_status('Listening · waiting for speech from the selected audio device…')
             elif kind in ('error', 'status'):
@@ -402,8 +472,13 @@ class Window(QMainWindow):
                 self.set_status('Listening · detected ' + event['language'] + ' → ' + self.target.currentText())
 
     def finished(self, code, status):
+        if self.starting and not self.closing:
+            for item in self.checks:
+                if item['status'] == 'checking':
+                    item.update(status='error', detail='Startup could not complete this check')
         self.running = False
         self.starting = False
+        self.downloading = False
         self.stopping = False
         self.start.setEnabled(True)
         self.stop.setEnabled(False)
@@ -420,6 +495,12 @@ class Window(QMainWindow):
 
     def closeEvent(self, event):
         self.closing = True
+        self.layer_open = False
+        if self.layer_process.state() != QProcess.NotRunning:
+            self.layer_process.terminate()
+            if not self.layer_process.waitForFinished(1000):
+                self.layer_process.kill()
+                self.layer_process.waitForFinished(1000)
         self.save()
         if self.process.state() != QProcess.NotRunning:
             self.closing = True
@@ -432,9 +513,9 @@ class Window(QMainWindow):
                 QApplication.instance().quit()
 
     def snapshot(self):
-        return dict(settings=self.current_settings(), models=self.models,
+        return dict(settings=self.current_settings(), models=self.models, checks=self.checks,
                     outputs=[dict(name=self.output.itemData(i), label=self.output.itemText(i)) for i in range(self.output.count())],
-                    running=self.running, starting=self.starting, stopping=self.stopping, overlay=self.isVisible(),
+                    running=self.running, starting=self.starting, downloading=self.downloading, stopping=self.stopping, overlay=self.overlay_visible(),
                     key_ready=bool(self.token.text()), remember_token=self.remember.isChecked(),
                     status=self.status.text())
 
@@ -442,7 +523,7 @@ class Window(QMainWindow):
         values = request.get('settings', {})
         if not isinstance(values, dict):
             raise ValueError('Settings must be an object')
-        if self.running:
+        if self.running or self.downloading:
             values = {key: value for key, value in values.items() if key in
                       ('font_size', 'background_transparency', 'border_width', 'history_lines', 'auto_scroll')}
         for key, field in [('provider', self.provider), ('audio_input', self.audio_input),
@@ -483,13 +564,23 @@ class Window(QMainWindow):
 
     def handle_request(self, request):
         action = request.get('action', 'state')
-        if action == 'configure':
+        if action == 'overlay-state':
+            return self.overlay_state()
+        elif action == 'overlay-geometry':
+            self.resize(max(430, min(6000, int(request['width']))), max(230, min(4000, int(request['height']))))
+            self.save()
+        elif action == 'configure':
             self.configure(request)
         elif action == 'start':
-            self.show()
-            self.start_capture()
+            self.show_overlay()
+            if not self.layer_mode or self.layer_open:
+                self.start_capture()
         elif action == 'stop':
             self.close()
+        elif action == 'download':
+            self.download_whisper()
+        elif action == 'cancel-download':
+            self.stop_capture()
         elif action == 'models':
             self.refresh_models()
         elif action == 'suggest':
@@ -497,12 +588,13 @@ class Window(QMainWindow):
         elif action == 'outputs':
             self.send('outputs')
         elif action == 'show':
-            self.show()
-            self.raise_()
-            self.activateWindow()
+            self.show_overlay()
+            if not self.layer_mode:
+                self.raise_()
+                self.activateWindow()
         elif action == 'clear':
             self.captions.clear()
-        elif action == 'close' or (action == 'release' and not self.isVisible()):
+        elif action == 'close' or (action == 'release' and not self.overlay_visible()):
             self.closing = True
             self.close()
         return self.snapshot()
@@ -537,6 +629,7 @@ def main():
     if not server.listen(name):
         raise RuntimeError('Could not create Video Trans activation socket')
     window = Window()
+    window.layer_mode = app.platformName() == 'wayland'
     connections = set()
     def activate():
         connection = server.nextPendingConnection()
@@ -570,7 +663,7 @@ def main():
     timer.timeout.connect(lambda: None)
     timer.start(200)
     if '--controller' not in sys.argv:
-        window.show()
+        window.show_overlay()
     return app.exec()
 
 

@@ -110,6 +110,41 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(self.window.start.isEnabled())
         self.assertIn('Worker failed', self.window.captions.placeholderText())
 
+    def test_startup_check_results_are_exposed_to_native_panel(self):
+        self.event(dict(type='check', id='whisper', label='Whisper', status='ok', detail='small · ready'))
+        self.assertEqual(self.window.snapshot()['checks'][0]['status'], 'ok')
+        self.event(dict(type='check', id='whisper', label='Whisper', status='error', detail='Unavailable'))
+        checks = self.window.snapshot()['checks']
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]['status'], 'error')
+
+    def test_download_selected_whisper_does_not_start_capture(self):
+        self.window.speech_model.setCurrentText('medium')
+        self.window.handle_request({'action': 'download'})
+        self.window.send.assert_called_with('download')
+        self.assertTrue(self.window.downloading)
+        self.assertFalse(self.window.running)
+        self.event(dict(type='downloaded', model='medium'))
+        self.assertFalse(self.window.downloading)
+        self.assertIn('downloaded and ready', self.window.status.text())
+
+    def test_layer_state_contains_captions_but_never_credentials(self):
+        self.window.layer_mode = True
+        self.window.layer_open = True
+        self.window.token.setText('private-test-token')
+        self.window.captions.setPlainText('Lesbare Untertitel')
+        state = self.window.handle_request({'action': 'overlay-state'})
+        self.assertEqual(state['text'], 'Lesbare Untertitel')
+        self.assertTrue(state['open'])
+        self.assertNotIn('private-test-token', json.dumps(state))
+
+    def test_closing_panel_keeps_layer_overlay(self):
+        self.window.layer_mode = True
+        self.window.layer_open = True
+        with patch.object(self.window, 'close') as close:
+            self.window.handle_request({'action': 'release'})
+            close.assert_not_called()
+
     def test_border_hides_on_focus_loss_and_returns_on_focus(self):
         self.window.show()
         self.assertNotIn('solid transparent', self.window.centralWidget().styleSheet())

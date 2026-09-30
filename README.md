@@ -28,16 +28,9 @@ omarchy plugin add https://github.com/uBruckhaus/omarchy-video-trans.git --enabl
 bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh
 ```
 
-Omarchy does not execute plugin setup hooks. Run setup explicitly; it downloads an isolated Python 3.12 runtime and pinned dependencies under `~/.local/share/video-trans/runtime`. First **Start** downloads the selected Whisper model from Hugging Face. Downloads can be cancelled by Stop or Close. A filesystem path to an existing faster-whisper / CTranslate2 model can also be entered in the Whisper-model field. Models such as `tiny.en` are English-only; choose a multilingual model for automatic language detection.
+Omarchy does not execute plugin setup hooks. Run setup explicitly; it downloads an isolated Python 3.12 runtime and pinned dependencies under `~/.local/share/video-trans/runtime`. Select **Whisper model** in the main panel: Tiny, Base, Small, Medium, Large (v3), or Turbo. Click **Download selected Whisper model** to cache it before translation; **Cancel Whisper download** cancels the operation. Downloads never start audio capture or a translation provider. First **Start** also downloads the selected model if needed. Downloads can be cancelled by Stop or Close. A filesystem path to an existing faster-whisper / CTranslate2 model can also be entered in the Whisper-model field. Models such as `tiny.en` are English-only; choose a multilingual model for automatic language detection.
 
-For Omarchy's Lua Hyprland configuration, add to `~/.config/hypr/hyprland.lua`:
-
-```lua
--- Video Trans floating caption window
-o.window({ title = "^Video Trans — Live captions$" }, { float = true, pin = false, border_size = 0, opacity = "1 1" })
-```
-
-Then validate with `hyprctl reload` and `hyprctl configerrors`. The unpinned window stays on the workspace where it opens. Position it above or below your video; resize with the bottom-right handle or Super + right mouse drag. It is a floating application window, not an embedded player subtitle track. Fullscreen stacking depends on your compositor; use a windowed/maximized video if your fullscreen player covers captions.
+On Omarchy/Wayland the independent caption surface uses Quickshell's **overlay layer**, so it remains above fullscreen video. It belongs to the workspace where it opens: switching workspaces hides it, returning shows the same captions, and capture continues in the background. No Hyprland window rule is required. Drag its top edge to move it and its bottom-right handle to resize it. Stop and Close overlay in the plugin panel close it and release owned resources.
 
 ## Use
 
@@ -45,7 +38,7 @@ Then validate with `hyprctl reload` and `hyprctl configerrors`. The unpinned win
 2. Whisper appears first as the speech provider. Choose the audio input type and device. For videos use **Audio output** and select the device carrying playback. This captures all applications playing through that output; close or mute unrelated audio.
 3. Keep source language **auto**, select a target language and a multilingual Whisper model.
 4. Select your translation provider and click **Start provider / refresh models**. Choose a text model, or click **Auto-select local model for target language**. When Online is selected, Auto-select detects an installed llama.cpp or Ollama, switches to it and suggests an available model. It does not download new translation models or load one for a benchmark. Synthesis/tokenizer models are excluded. A small instruction model is usually more responsive than a large reasoning model.
-5. Click **Start** to open the separate caption window and begin translation. The empty overlay shows live loading/listening status until the first caption; the panel distinguishes startup from active capture. If no audio reaches the selected device, its status tells you to select the output used by your video. **Show captions** opens it without starting capture. Closing the popup leaves a visible overlay and translation running. Resize/move the overlay independently, and disable **Follow new captions** in the panel to read at your own pace. Stop closes the overlay; **Clear captions** in the panel removes its text. Closing the overlay stops capture, releases owned models/services and exits its process.
+5. Click **Start** to open the separate caption window and begin translation. The panel displays a startup checklist with green or red checkmarks for target language, audio capture, Whisper, provider access and the selected translation model. A gray ellipsis means a check or model load is still in progress. Missing requirements block startup with an explanation. The empty overlay shows live loading/listening status until the first caption; the panel distinguishes startup from active capture. If no audio reaches the selected device, its status tells you to select the output used by your video. **Show captions** opens it without starting capture. Closing the popup leaves a visible overlay and translation running. Resize/move the overlay independently, and disable **Follow new captions** in the panel to read at your own pace. Stop closes the overlay; **Clear captions** in the panel removes its text. Closing the overlay stops capture, releases owned models/services and exits its process.
 
 Expand **Provider and recognition settings** for endpoints, authentication and advanced speech options. Expand **Caption overlay appearance** for transparency, border and reading controls; `−1` uses the current Omarchy theme default. Hiding the popup when no overlay is open releases the idle controller and any service it started for model discovery.
 
@@ -103,3 +96,7 @@ bash -n setup.sh launch.sh
 Tests cover device-type isolation, capture filters, provider protocols, ownership cleanup, credential permissions, target-sensitive model suggestions, Omarchy theme defaults, appearance overrides, plain-text caption rendering, retained captions and asynchronous close. They do not require models, audio capture or paid API calls. A full local integration check also passed: playback through a temporary silent sink → noise filtering → Whisper English detection → Gemma German translation → worker/service cleanup. Whisper rejected a synthetic non-speech noise sample. Online and Ollama integration need their respective accounts/installations.
 
 See [MARKETPLACE.md](MARKETPLACE.md) for listing details. MIT licensed. Independent community plugin.
+
+The target-language check validates the selected translation target; it does not benchmark model fluency. Whisper detects the **source** language, independently of the target. English-only speech models require an English source override. For online endpoints without a model-list API, provider/model checks remain pending until the first successful translation verifies them.
+
+Optional desktop check: `QT_QPA_PLATFORM=wayland ~/.local/share/video-trans/runtime/bin/python scripts/smoke_fullscreen.py` verifies fullscreen stacking and workspace visibility with a temporary test window.

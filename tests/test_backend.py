@@ -8,9 +8,48 @@ from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from backend import Backend
+from core import DEFAULTS
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_whisper_download_does_not_start_translation_or_capture(self):
+        backend = Backend()
+        backend.jobs.put({'action': 'download', 'settings': DEFAULTS | {'speech_model': 'medium'}})
+        backend.jobs.put({'action': 'quit'})
+        with patch.object(backend, 'download_speech') as download, patch.object(backend, 'configure') as configure, patch.object(backend, 'run_capture') as capture, patch('backend.emit') as emit:
+            backend.work()
+        download.assert_called_once_with(DEFAULTS | {'speech_model': 'medium'})
+        configure.assert_not_called()
+        capture.assert_not_called()
+        self.assertTrue(any(c.args[0] == 'downloaded' and c.kwargs['model'] == 'medium' for c in emit.call_args_list))
+
+    def test_startup_checks_verify_local_model_and_audio(self):
+        backend = Backend()
+        backend.provider = Mock()
+        backend.provider.models.return_value = ['translator']
+        with patch.object(backend, 'configure'), patch('backend.capture_command'), patch('backend.shutil.which', return_value='/bin/tool'), patch('backend.importlib.util.find_spec', return_value=object()), patch('backend.emit') as emit:
+            backend.quick_check({'settings': DEFAULTS | {'model': 'translator'}})
+        checks = {c.kwargs['id']: c.kwargs for c in emit.call_args_list if c.args[0] == 'check'}
+        self.assertEqual(checks['model']['status'], 'ok')
+        self.assertEqual(checks['audio']['status'], 'ok')
+        self.assertEqual(checks['target']['detail'], 'German')
+
+    def test_startup_rejects_missing_local_model(self):
+        backend = Backend()
+        backend.provider = Mock()
+        backend.provider.models.return_value = ['other-model']
+        with patch.object(backend, 'configure'), patch('backend.capture_command'), patch('backend.shutil.which', return_value='/bin/tool'), patch('backend.importlib.util.find_spec', return_value=object()), patch('backend.emit') as emit:
+            with self.assertRaisesRegex(ValueError, 'unavailable'):
+                backend.quick_check({'settings': DEFAULTS | {'model': 'missing-model'}})
+        self.assertTrue(any(c.kwargs.get('id') == 'model' and c.kwargs.get('status') == 'error' for c in emit.call_args_list))
+
+    def test_english_only_whisper_cannot_auto_detect_other_languages(self):
+        backend = Backend()
+        with patch('backend.capture_command'), patch('backend.shutil.which', return_value='/bin/tool'), patch('backend.importlib.util.find_spec', return_value=object()), patch('backend.emit') as emit:
+            with self.assertRaisesRegex(ValueError, 'multilingual'):
+                backend.quick_check({'settings': DEFAULTS | {'model': 'translator', 'speech_model': 'tiny.en'}})
+        self.assertTrue(any(c.kwargs.get('id') == 'whisper' and c.kwargs.get('status') == 'error' for c in emit.call_args_list))
+
     def test_stop_terminates_capture_and_download(self):
         backend = Backend()
         backend.capture = Mock()
