@@ -13,7 +13,7 @@ CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'vid
 DEFAULTS = dict(provider='llama.cpp', endpoint='http://127.0.0.1:8080', model='',
                 speech_provider='Whisper (local)', audio_input='Audio output',
                 target='German', source='auto', speech_model='small', chunk_seconds=5,
-                noise_filter=True, font_size=24, background_transparency=100, border_width=1, history_lines=500,
+                noise_filter=True, font_size=24, caption_seconds=5, background_transparency=100, border_width=1, history_lines=500,
                 output='', auto_scroll=True)
 LANGUAGES = ['German', 'English', 'French', 'Spanish', 'Italian', 'Portuguese',
              'Dutch', 'Polish', 'Ukrainian', 'Russian', 'Japanese', 'Chinese',

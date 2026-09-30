@@ -6,6 +6,8 @@ Live translated captions for Omarchy, from **audio output or an explicitly selec
 
 The preview uses synthetic example captions, not a recording.
 
+**[User manual](MANUAL.md)** · **[Marketplace description](MARKETPLACE.md)** · **[MIT license](LICENSE)**
+
 ## Features
 
 - Local multilingual Whisper detects the spoken language automatically, including after a language change. You can override it with a language code.
@@ -15,7 +17,7 @@ The preview uses synthetic example captions, not a recording.
 - Local llama.cpp router and Ollama support automatic service startup, model discovery and model cleanup. **Auto-select local model** considers the target language, multilingual model family and model size, excluding speech-synthesis, embedding and coding-only models. This is an editable heuristic suggestion, not a quality benchmark.
 - Online endpoint, model and masked API-key / bearer-token configuration. Compatible with the `/v1/models` and `/v1/chat/completions` protocols, rather than every provider's proprietary API.
 - A native Omarchy popup for settings and translation controls, independent of the caption window. Its appearance always follows the shell's default panel components and theme.
-- A resizable floating caption window with adjustable font size, background transparency and border thickness. These appearance controls affect **only the overlay**, never the native widget/panel. Overlay background, text and border colors follow the active Omarchy theme; The background is fully transparent with a 1 px border by default. The border appears when the overlay opens or gains focus, and becomes invisible on focus loss without shifting the captions; both can be adjusted, and −1 uses the theme's popup settings. Text stays opaque as background transparency changes. Theme changes are picked up while the window is open. Captions remain during pauses and accumulate throughout the available window area; they do not time out; a bounded scrollback retains 500 paragraphs by default, configurable up to 5,000. Disable **Follow new captions** in the plugin panel to read older captions without being scrolled away.
+- A resizable floating caption window with adjustable font size, background transparency and border thickness. These appearance controls affect **only the overlay**, never the native widget/panel. Overlay background, text and border colors follow the active Omarchy theme; The background is fully transparent with a 1 px border by default. The border appears when the overlay opens or gains focus, and becomes invisible on focus loss without shifting the captions; both can be adjusted, and −1 uses the theme's popup settings. Text stays opaque as background transparency changes. Theme changes are picked up while the window is open. Each caption stays visible for 5 seconds by default, then expires independently. Adjust **Caption duration (seconds)** from 1 to 120 seconds and **Caption font size** in the main plugin controls, including while translating. The overlay can shrink to approximately three lines at the selected font size. Disable **Follow new captions** in the plugin panel to read older captions without being scrolled away.
 - Stop closes the overlay immediately, releases the speech worker and owned resources, then exits the GUI.
 
 ## Install
@@ -84,13 +86,30 @@ Whisper still processes audio locally. **Only recognized text is sent to the sel
 
 XDG config/data paths are respected. Credentials are stored only if **Save token locally** is selected; the file is owner-only plaintext, not an encrypted keychain. Provider tokens never go into the repository or settings file. No telemetry. Credentials and preferences remain after removing the plugin.
 
+## Update and remove
+
+Stop translation before updating or removing the plugin.
+
+```bash
+omarchy plugin update ubruckhaus.video-trans
+bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh
+```
+
+Rerun setup after updates to synchronize the isolated runtime with the pinned dependencies.
+
+```bash
+omarchy plugin remove ubruckhaus.video-trans
+```
+
+Removal deletes the plugin checkout and bar integration. It retains preferences, saved credentials, the isolated runtime and cached Whisper models. See the [manual](MANUAL.md#remove-and-clean-up) for optional cleanup. Setup never edits Hyprland bindings or replaces user configuration.
+
 ## Development and checks
 
 ```bash
 bash setup.sh
 ~/.local/share/video-trans/runtime/bin/python -m unittest discover -s tests -v
 omarchy plugin validate .
-bash -n setup.sh launch.sh
+bash -n setup.sh launch.sh bridge.sh start.sh toggle.sh
 ```
 
 Tests cover device-type isolation, capture filters, provider protocols, ownership cleanup, credential permissions, target-sensitive model suggestions, Omarchy theme defaults, appearance overrides, plain-text caption rendering, retained captions and asynchronous close. They do not require models, audio capture or paid API calls. A full local integration check also passed: playback through a temporary silent sink → noise filtering → Whisper English detection → Gemma German translation → worker/service cleanup. Whisper rejected a synthetic non-speech noise sample. Online and Ollama integration need their respective accounts/installations.
@@ -105,5 +124,7 @@ Optional shortcut in `~/.config/hypr/bindings.lua` (replaces the stock Clipboard
 
 ```lua
 hl.unbind("SUPER + CTRL + V")
-o.bind("SUPER + CTRL + V", "Video Trans: start translated captions", "bash " .. os.getenv("HOME") .. "/.config/omarchy/plugins/ubruckhaus.video-trans/start.sh")
+o.bind("SUPER + CTRL + V", "Video Trans: toggle translated captions", { launch = "bash " .. os.getenv("HOME") .. "/.config/omarchy/plugins/ubruckhaus.video-trans/toggle.sh" })
 ```
+
+Super + Ctrl + V toggles the overlay: opening starts translation; closing stops capture and releases owned resources.

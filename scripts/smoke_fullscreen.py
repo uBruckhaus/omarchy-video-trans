@@ -17,6 +17,7 @@ errors=[]
 with tempfile.TemporaryDirectory() as tmp, patch.object(gui,'CONFIG',Path(tmp)),patch.object(gui,'load_settings',return_value=DEFAULTS.copy()),patch.object(gui.Window,'send'),patch.object(bridge,'socket_path',return_value=tmp+'/caption.sock'):
     server=QLocalServer();assert server.listen(tmp+'/caption.sock')
     w=gui.Window(); w.layer_mode=True
+    w.resize(900, w.minimumHeight())
     w.captions.setPlainText('VIDEO TRANS FULLSCREEN TEST\nDeutsche Untertitel bleiben über dem Video sichtbar.')
     connections=set()
     def connect():
@@ -42,6 +43,7 @@ with tempfile.TemporaryDirectory() as tmp, patch.object(gui,'CONFIG',Path(tmp)),
             background=next(c for c in clients if c['title']==video.windowTitle())
             assert background['fullscreen']>0,background
             state=subprocess.check_output(['quickshell','ipc','-p',str(ROOT / 'overlay/shell.qml'),'call','video-trans-overlay','state'],text=True)
+            assert json.loads(state)['height'] < 230, 'Overlay did not shrink to three-line height'
             print('Fullscreen layer state:',state)
             assert json.loads(state)['visible']
             print('Fullscreen background + overlay layer verified')

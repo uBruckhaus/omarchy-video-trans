@@ -1,4 +1,4 @@
-# Marketplace submission draft
+# Video Trans · Marketplace description
 
 **Name:** Video Trans
 
@@ -6,13 +6,13 @@
 
 **Repository:** https://github.com/uBruckhaus/omarchy-video-trans
 
-**Category:** Media
+**Category:** Productivity
 
-**Tags:** ai, media, bar, quickshell, captions, translation, whisper
+**Tags:** ai, media, bar
 
 **Screenshot:** `preview.png` (synthetic captions)
 
-Live translated captions from audio output or an explicitly selected microphone. A native Omarchy panel controls translation; the independent caption overlay is resizable and floating above fullscreen video, restricted to its starting workspace. Local Whisper automatically detects speech language and filters non-speech. Choose llama.cpp, Ollama or an OpenAI-compatible online translator and model, with an automatic local-model suggestion based on your target language. Overlay-only transparency and border controls, persistent scrollback and cleanup on Stop/Close. German target by default. Startup checks display green/red checkmarks for speech recognition, audio capture, translator and model availability.
+Live translated captions from audio output or an explicitly selected microphone. A native Omarchy panel controls translation; the independent caption overlay is resizable and floating above fullscreen video, restricted to its starting workspace. Local Whisper automatically detects speech language and filters non-speech. Choose llama.cpp, Ollama or an OpenAI-compatible online translator and model, with an automatic local-model suggestion based on your target language. Overlay-only transparency and border controls, adjustable caption duration and scrollback and cleanup on Stop/Close. German target by default. Startup checks display green/red checkmarks for speech recognition, audio capture, translator and model availability.
 
 ## Capabilities
 
@@ -27,6 +27,16 @@ Live translated captions from audio output or an explicitly selected microphone.
 
 Omarchy shell with plugin support, PipeWire-Pulse, `ffmpeg`, `pactl` (`libpulse`) and `uv`. Setup installs Python 3.12, PySide6, faster-whisper and httpx in an isolated runtime. Local translation requires a configured llama.cpp router or Ollama with downloaded text models. Online translation requires an OpenAI-compatible endpoint/account.
 
-## Submission
+## Installation
 
-Validate the manifest, run tests and review screenshot/README, then submit the repository through https://plugins.omarchy.org/publish.html. This file is a submission draft; publishing the GitHub repository does not create a marketplace listing.
+```bash
+omarchy pkg add ffmpeg libpulse uv
+omarchy plugin add https://github.com/uBruckhaus/omarchy-video-trans.git --enable
+bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh
+```
+
+Explicit runtime setup is required after adding the plugin. Omarchy does not execute setup hooks. See the [user manual](MANUAL.md) for first-session guidance, troubleshooting and removal.
+
+## Publication
+
+Marketplace submission targets Productivity with the tags ai, media and bar. A maintainer must review the exact submitted commit before the listing is published. Installer, dependency management and user-service management may require baseline review; these capabilities are documented above. MIT licensed; the preview contains synthetic example captions.

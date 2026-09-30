@@ -1,12 +1,13 @@
-"""Video Trans: a resizable, persistent caption window and provider settings."""
+"""Video Trans: a resizable caption window with adjustable expiry and provider settings."""
 import json
 import os
 from pathlib import Path
 import signal
 import sys
+import time
 
 from PySide6.QtCore import QEvent, QProcess, QProcessEnvironment, QTimer, Qt
-from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen
+from PySide6.QtGui import QFont, QFontMetrics, QPalette, QColor, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QScrollArea,
@@ -48,7 +49,7 @@ class Window(QMainWindow):
         self.layer_process = QProcess(self)
         self.layer_process.finished.connect(self.layer_finished)
         self.resize(900, 460)
-        self.setMinimumSize(430, 230)
+        self.setMinimumSize(430, 124)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.settings = load_settings()
         self.resize(int(self.settings.get('width', 900)), int(self.settings.get('height', 460)))
@@ -61,6 +62,8 @@ class Window(QMainWindow):
         self.models = []
         self.checks = []
         self.buffer = bytearray()
+        self.caption_entries = []
+        self.caption_received = False
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.SeparateChannels)
         self.process.readyReadStandardOutput.connect(self.read_events)
@@ -81,7 +84,7 @@ class Window(QMainWindow):
         self.compact = QPushButton('Caption mode')
         self.compact.clicked.connect(self.toggle_compact)
         clear = QPushButton('Clear')
-        clear.clicked.connect(lambda: self.captions.clear())
+        clear.clicked.connect(self.clear_captions)
         self.scroll = QCheckBox('Follow new text')
         self.scroll.setChecked(self.settings['auto_scroll'])
         for item in (self.start, self.stop, self.compact, clear, self.scroll):
@@ -100,7 +103,7 @@ class Window(QMainWindow):
         self.captions = QTextEdit()
         self.captions.setObjectName('videoTransCaptions')
         self.captions.setReadOnly(True)
-        self.captions.setPlaceholderText('Select an audio input and a translation model in Settings, then press Start. Captions stay until you clear them.')
+        self.captions.setPlaceholderText('Select an audio input and a translation model in Settings, then press Start.')
         self.captions.document().setMaximumBlockCount(int(self.settings['history_lines']))
         self.tabs.addTab(self.captions, 'Captions')
         self.settings_widget = QWidget()
@@ -161,6 +164,10 @@ class Window(QMainWindow):
         self.font_size = QSpinBox()
         self.font_size.setRange(12, 64)
         self.font_size.setValue(self.settings['font_size'])
+        self.caption_seconds = QSpinBox()
+        self.caption_seconds.setRange(1, 120)
+        self.caption_seconds.setValue(self.settings.get('caption_seconds', 5))
+        self.caption_seconds.setSuffix(' seconds')
         self.transparency = QSpinBox()
         self.transparency.setRange(-1, 100)
         self.transparency.setSpecialValueText('Omarchy theme default')
@@ -182,12 +189,13 @@ class Window(QMainWindow):
                               ('Source language (auto detects)', self.source), ('Whisper model', self.speech_model),
                               ('Noise filtering', self.noise), ('Audio chunk size', self.chunk),
                               ('Caption font size', self.font_size), ('Background transparency', self.transparency),
+                              ('Caption display duration', self.caption_seconds),
                               ('Border thickness', self.border_width),
                               ('Retained caption paragraphs', self.history)]:
             self.form.addRow(label, widget)
         hint = QLabel('Local: recognized text goes to llama.cpp / Ollama. Online: recognized text is sent to your endpoint.\n'
                       'Authentication accepts API keys or existing bearer tokens; browser OAuth login is not included.\n'
-                      'Captions never expire. Scroll back or disable Follow to read at your own pace.')
+                      'Each caption expires after the selected display duration.')
         hint.setWordWrap(True)
         self.form.addRow(hint)
         self.status = QLabel('Ready · select Audio output or Microphone explicitly')
@@ -204,7 +212,27 @@ class Window(QMainWindow):
         self.theme_timer = QTimer(self)
         self.theme_timer.timeout.connect(self.apply_appearance)
         self.theme_timer.start(2000)
+        self.caption_timer = QTimer(self)
+        self.caption_timer.timeout.connect(self.expire_captions)
+        self.caption_timer.start(100)
         self.send('outputs')
+
+    def clear_captions(self):
+        self.caption_entries.clear()
+        self.captions.clear()
+
+    def render_captions(self):
+        scroll = self.captions.verticalScrollBar()
+        position = scroll.value()
+        self.captions.setPlainText('\n\n'.join(text for _, text in self.caption_entries))
+        scroll.setValue(scroll.maximum() if self.scroll.isChecked() else position)
+
+    def expire_captions(self):
+        cutoff = time.monotonic() - self.caption_seconds.value()
+        retained = [(created, text) for created, text in self.caption_entries if created > cutoff]
+        if len(retained) != len(self.caption_entries):
+            self.caption_entries = retained
+            self.render_captions()
 
     def set_status(self, text):
         self.status.setText(text)
@@ -241,7 +269,7 @@ class Window(QMainWindow):
         theme = read_theme()
         transparency = self.transparency.value()
         width = self.border_width.value()
-        return dict(open=self.layer_open, text=self.captions.toPlainText(), status=self.status.text(),
+        return dict(open=self.layer_open, text=self.captions.toPlainText(), status=self.status.text(), caption_received=self.caption_received,
                     theme=theme, font_size=self.font_size.value(), auto_scroll=self.scroll.isChecked(),
                     background_transparency=theme['background_transparency'] if transparency < 0 else transparency,
                     border_width=theme['border_width'] if width < 0 else width,
@@ -260,6 +288,7 @@ class Window(QMainWindow):
 
     def apply_appearance(self):
         self.captions.setFont(QFont('sans-serif', self.font_size.value()))
+        self.setMinimumHeight(QFontMetrics(self.captions.font()).lineSpacing() * 3 + 28)
         theme = read_theme()
         background = QColor(theme['background'])
         foreground = QColor(theme['foreground'])
@@ -307,7 +336,7 @@ class Window(QMainWindow):
                     model=self.model.currentText().strip(), target=self.target.currentText().strip(),
                     source=self.source.currentText().strip(), speech_model=self.speech_model.currentText().strip(),
                     chunk_seconds=self.chunk.value(), noise_filter=self.noise.isChecked(),
-                    font_size=self.font_size.value(), background_transparency=self.transparency.value(),
+                    font_size=self.font_size.value(), caption_seconds=self.caption_seconds.value(), background_transparency=self.transparency.value(),
                     border_width=self.border_width.value(), history_lines=self.history.value(),
                     output=self.output.currentData() or '', auto_scroll=self.scroll.isChecked())
 
@@ -459,16 +488,11 @@ class Window(QMainWindow):
                 self.set_status(event['reason'])
                 self.save()
             elif kind == 'caption':
-                scroll = self.captions.verticalScrollBar()
-                position = scroll.value()
-                self.captions.append('')
-                cursor = self.captions.textCursor()
-                cursor.movePosition(cursor.MoveOperation.End)
-                cursor.insertText(event['timestamp'] + ' · ' + event['language'] + '\n' + event['text'])
-                if self.scroll.isChecked():
-                    scroll.setValue(scroll.maximum())
-                else:
-                    scroll.setValue(position)
+                self.caption_received = True
+                self.expire_captions()
+                self.caption_entries.append((time.monotonic(), event['text']))
+                self.caption_entries = self.caption_entries[-self.history.value():]
+                self.render_captions()
                 self.set_status('Listening · detected ' + event['language'] + ' → ' + self.target.currentText())
 
     def finished(self, code, status):
@@ -525,7 +549,7 @@ class Window(QMainWindow):
             raise ValueError('Settings must be an object')
         if self.running or self.downloading:
             values = {key: value for key, value in values.items() if key in
-                      ('font_size', 'background_transparency', 'border_width', 'history_lines', 'auto_scroll')}
+                      ('font_size', 'caption_seconds', 'background_transparency', 'border_width', 'history_lines', 'auto_scroll')}
         for key, field in [('provider', self.provider), ('audio_input', self.audio_input),
                            ('model', self.model), ('target', self.target), ('source', self.source), ('speech_model', self.speech_model)]:
             if key in values:
@@ -546,6 +570,7 @@ class Window(QMainWindow):
                 index = self.output.findData(value)
             self.output.setCurrentIndex(index)
         for key, field in [('chunk_seconds', self.chunk), ('font_size', self.font_size),
+                           ('caption_seconds', self.caption_seconds),
                            ('background_transparency', self.transparency), ('border_width', self.border_width),
                            ('history_lines', self.history)]:
             if key in values:
@@ -561,6 +586,7 @@ class Window(QMainWindow):
         self.captions.document().setMaximumBlockCount(self.history.value())
         self.save()
         self.apply_appearance()
+        self.expire_captions()
 
     def handle_request(self, request):
         action = request.get('action', 'state')
@@ -571,6 +597,13 @@ class Window(QMainWindow):
             self.save()
         elif action == 'configure':
             self.configure(request)
+        elif action == 'toggle':
+            if self.overlay_visible():
+                self.close()
+            else:
+                self.show_overlay()
+                if not self.layer_mode or self.layer_open:
+                    self.start_capture()
         elif action == 'start':
             self.show_overlay()
             if not self.layer_mode or self.layer_open:
@@ -593,7 +626,7 @@ class Window(QMainWindow):
                 self.raise_()
                 self.activateWindow()
         elif action == 'clear':
-            self.captions.clear()
+            self.clear_captions()
         elif action == 'close' or (action == 'release' and not self.overlay_visible()):
             self.closing = True
             self.close()

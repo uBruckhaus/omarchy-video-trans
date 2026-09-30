@@ -98,6 +98,8 @@ Ui.Panel {
           Ui.Button { text: "Clear captions"; focusable: true; onClicked: root.request({action: "clear"}) }
         }
         Ui.Toggle { width: parent.width; label: "Follow new captions"; checked: root.config.auto_scroll !== false; onClicked: root.set("auto_scroll", !checked) }
+        Ui.NumberField { label: "Caption duration (seconds)"; from: 1; to: 120; value: root.config.caption_seconds || 5; onModified: root.set("caption_seconds", value) }
+        Ui.NumberField { label: "Caption font size"; from: 12; to: 64; value: root.config.font_size || 24; onModified: root.set("font_size", value) }
         Text { width: parent.width; text: root.message; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.caption }
         Column {
           width: parent.width
@@ -152,7 +154,6 @@ Ui.Panel {
         Column {
           width: parent.width; visible: root.appearance; spacing: Style.spacing.md
           Text { width: parent.width; text: "Only the caption window is affected. −1 uses the Omarchy theme default."; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.caption }
-          Ui.NumberField { label: "Caption font size"; from: 12; to: 64; value: root.config.font_size || 24; onModified: root.set("font_size", value) }
           Ui.NumberField { label: "Background transparency (%)"; from: -1; to: 100; value: root.config.background_transparency === undefined ? -1 : root.config.background_transparency; onModified: root.set("background_transparency", value) }
           Ui.NumberField { label: "Border thickness (px)"; from: -1; to: 16; value: root.config.border_width === undefined ? -1 : root.config.border_width; onModified: root.set("border_width", value) }
           Ui.NumberField { label: "Retained caption paragraphs"; from: 50; to: 5000; value: root.config.history_lines || 500; onModified: root.set("history_lines", value) }

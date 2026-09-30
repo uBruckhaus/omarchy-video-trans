@@ -52,6 +52,9 @@ class WindowTests(unittest.TestCase):
         text = self.window.captions.toPlainText()
         self.assertIn('<b>hello</b>', text)
         self.assertIn('Guten Tag', text)
+        self.assertNotIn('12:00', text)
+        self.assertNotIn('12:01', text)
+        self.assertNotIn(' · fr', text)
         self.assertLessEqual(self.window.captions.document().blockCount(), self.window.history.value())
 
     def test_close_waits_for_cleanup_without_blocking_gui(self):
@@ -87,6 +90,39 @@ class WindowTests(unittest.TestCase):
         self.event(dict(type='caption', timestamp='12:01', language='en', text='Nächster Satz.'))
         self.assertIn('Erster Satz.', self.window.captions.toPlainText())
         self.assertIn('Nächster Satz.', self.window.captions.toPlainText())
+
+    def test_each_caption_expires_after_five_seconds(self):
+        with patch.object(gui.time, 'monotonic', return_value=100):
+            self.event(dict(type='caption', language='en', text='First sentence.'))
+        with patch.object(gui.time, 'monotonic', return_value=103):
+            self.event(dict(type='caption', language='en', text='Second sentence.'))
+        with patch.object(gui.time, 'monotonic', return_value=105):
+            self.window.expire_captions()
+        self.assertEqual(self.window.captions.toPlainText(), 'Second sentence.')
+        with patch.object(gui.time, 'monotonic', return_value=108):
+            self.window.expire_captions()
+        self.assertEqual(self.window.captions.toPlainText(), '')
+
+    def test_duration_and_font_are_adjustable_during_capture(self):
+        self.window.running = True
+        self.window.configure({'settings': {'caption_seconds': 12, 'font_size': 16}})
+        self.assertEqual(self.window.current_settings()['caption_seconds'], 12)
+        self.assertEqual(self.window.current_settings()['font_size'], 16)
+        self.assertLess(self.window.minimumHeight(), 230)
+        with patch.object(gui.time, 'monotonic', return_value=100):
+            self.event(dict(type='caption', language='en', text='Longer display.'))
+        with patch.object(gui.time, 'monotonic', return_value=111):
+            self.window.expire_captions()
+        self.assertIn('Longer display.', self.window.captions.toPlainText())
+        with patch.object(gui.time, 'monotonic', return_value=112):
+            self.window.expire_captions()
+        self.assertEqual(self.window.captions.toPlainText(), '')
+
+    def test_clear_does_not_restore_expired_history(self):
+        self.event(dict(type='caption', language='en', text='Old sentence.'))
+        self.window.handle_request({'action': 'clear'})
+        self.event(dict(type='caption', language='en', text='New sentence.'))
+        self.assertEqual(self.window.captions.toPlainText(), 'New sentence.')
 
     def test_start_sends_capture_command_and_replaces_idle_placeholder(self):
         self.window.output.addItem('Playback', 'playback.monitor')
@@ -144,6 +180,18 @@ class WindowTests(unittest.TestCase):
         with patch.object(self.window, 'close') as close:
             self.window.handle_request({'action': 'release'})
             close.assert_not_called()
+
+    def test_toggle_closes_visible_overlay(self):
+        self.window.show()
+        with patch.object(self.window, 'close') as close:
+            self.window.handle_request({'action': 'toggle'})
+            close.assert_called_once()
+
+    def test_toggle_opens_hidden_overlay_and_starts_translation(self):
+        with patch.object(self.window, 'show_overlay') as show, patch.object(self.window, 'start_capture') as start:
+            self.window.handle_request({'action': 'toggle'})
+            show.assert_called_once()
+            start.assert_called_once()
 
     def test_border_hides_on_focus_loss_and_returns_on_focus(self):
         self.window.show()

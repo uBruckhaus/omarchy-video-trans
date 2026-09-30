@@ -15,6 +15,9 @@ ShellRoot {
   property string monitorName: ""
   property int captionWidth: 900
   property int captionHeight: 460
+  readonly property int minimumCaptionHeight: Math.ceil(captionMetrics.height * 3 + 28)
+  onMinimumCaptionHeightChanged: if (initialized) captionHeight = Math.max(captionHeight, minimumCaptionHeight)
+  TextMetrics { id: captionMetrics; font.pointSize: root.view.font_size || 24; text: "Ag" }
   property real left: 100
   property real top: 100
   property var queued: null
@@ -36,7 +39,7 @@ ShellRoot {
       workspaceId = current.id
       monitorName = Hyprland.focusedMonitor.name
       captionWidth = next.width || 900
-      captionHeight = next.height || 460
+      captionHeight = Math.max(next.height || 460, minimumCaptionHeight)
       left = Math.max(0, (targetScreen.width - captionWidth) / 2)
       top = Math.max(0, targetScreen.height - captionHeight - 60)
       initialized = true
@@ -101,7 +104,7 @@ ShellRoot {
           id: captions
           width: scroll.width
           height: Math.max(scroll.height, implicitHeight)
-          text: root.view.text || root.view.status || "Starting captions…"
+          text: root.view.text || (root.view.caption_received ? "" : root.view.status || "Starting captions…")
           textFormat: TextEdit.PlainText
           wrapMode: TextEdit.Wrap
           readOnly: true
@@ -159,7 +162,7 @@ ShellRoot {
             if (!pressed) return
             var position = mapToGlobal(mouse.x, mouse.y)
             root.captionWidth = Math.max(430, Math.min(root.targetScreen.width - root.left, initial.x + position.x - pointer.x))
-            root.captionHeight = Math.max(230, Math.min(root.targetScreen.height - root.top, initial.y + position.y - pointer.y))
+            root.captionHeight = Math.max(root.minimumCaptionHeight, Math.min(root.targetScreen.height - root.top, initial.y + position.y - pointer.y))
           }
           onReleased: root.queued = {action: "overlay-geometry", width: root.captionWidth, height: root.captionHeight}
         }
