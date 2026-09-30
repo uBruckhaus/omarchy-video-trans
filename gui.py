@@ -28,6 +28,7 @@ class Window(QMainWindow):
         self.running = False
         self.stopping = False
         self.last_error = ''
+        self.models = []
         self.buffer = bytearray()
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.SeparateChannels)
@@ -54,6 +55,11 @@ class Window(QMainWindow):
         self.scroll.setChecked(self.settings['auto_scroll'])
         for item in (self.start, self.stop, self.compact, clear, self.scroll):
             buttons.addWidget(item)
+        # Translation controls belong to the native Omarchy popup. The Qt
+        # window contains only captions and reading controls.
+        self.start.hide()
+        self.stop.hide()
+        self.compact.hide()
         layout.addLayout(buttons)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
@@ -69,6 +75,8 @@ class Window(QMainWindow):
         settings_scroll.setWidgetResizable(True)
         settings_scroll.setWidget(self.settings_widget)
         self.tabs.addTab(settings_scroll, 'Settings')
+        self.tabs.setTabVisible(1, False)
+        self.tabs.tabBar().hide()
         self.speech_provider = QComboBox()
         self.speech_provider.addItems(['Whisper (local)'])
         self.audio_input = QComboBox()
@@ -151,6 +159,7 @@ class Window(QMainWindow):
         self.status = QLabel('Ready · select Audio output or Microphone explicitly')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.status.hide()
         self.provider.currentTextChanged.connect(self.provider_changed)
         self.audio_input.currentTextChanged.connect(lambda _: self.send('outputs'))
         self.endpoint.editingFinished.connect(self.load_token)
@@ -175,7 +184,6 @@ class Window(QMainWindow):
                             (QPalette.Highlight, accent), (QPalette.HighlightedText, background)):
             palette.setColor(role, color)
         self.setPalette(palette)
-        QApplication.instance().setPalette(palette)
         transparency = self.transparency.value()
         if transparency < 0:
             transparency = theme['background_transparency']
@@ -253,7 +261,6 @@ class Window(QMainWindow):
 
     def start_capture(self):
         if not self.output.currentData() or not self.model.currentText().strip():
-            self.tabs.setCurrentIndex(1)
             self.status.setText('Select an audio input device and translation model first.')
             return
         self.save()
@@ -303,12 +310,14 @@ class Window(QMainWindow):
                 if index >= 0:
                     self.output.setCurrentIndex(index)
             elif kind == 'models':
+                self.models = event['models']
                 selected = self.model.currentText()
                 self.model.clear()
                 self.model.addItems(event['models'])
                 if selected:
                     self.model.setCurrentText(selected)
             elif kind == 'suggestion':
+                self.models = event['models']
                 self.provider.setCurrentText(event['provider'])
                 self.endpoint.setText(event['endpoint'])
                 self.load_token()
@@ -338,6 +347,7 @@ class Window(QMainWindow):
         self.settings_widget.setEnabled(True)
         if self.closing:
             self.close()
+            QApplication.instance().quit()
         elif code != 0:
             self.status.setText('Worker exited unexpectedly. Check provider configuration and restart.')
         elif self.last_error:
@@ -346,6 +356,7 @@ class Window(QMainWindow):
             self.status.setText('Stopped · speech worker exited; captions retained')
 
     def closeEvent(self, event):
+        self.closing = True
         self.save()
         if self.process.state() != QProcess.NotRunning:
             self.closing = True
@@ -354,12 +365,91 @@ class Window(QMainWindow):
             event.ignore()
         else:
             event.accept()
+            if self.closing:
+                QApplication.instance().quit()
+
+    def snapshot(self):
+        return dict(settings=self.current_settings(), models=self.models,
+                    outputs=[dict(name=self.output.itemData(i), label=self.output.itemText(i)) for i in range(self.output.count())],
+                    running=self.running, stopping=self.stopping, overlay=self.isVisible(),
+                    key_ready=bool(self.token.text()), remember_token=self.remember.isChecked(),
+                    status=self.status.text())
+
+    def configure(self, request):
+        values = request.get('settings', {})
+        if not isinstance(values, dict):
+            raise ValueError('Settings must be an object')
+        if self.running:
+            values = {key: value for key, value in values.items() if key in
+                      ('font_size', 'background_transparency', 'border_width', 'history_lines', 'auto_scroll')}
+        for key, field in [('provider', self.provider), ('audio_input', self.audio_input),
+                           ('model', self.model), ('target', self.target), ('source', self.source), ('speech_model', self.speech_model)]:
+            if key in values:
+                field.setCurrentText(str(values[key]))
+        if 'endpoint' in values:
+            endpoint = str(values['endpoint'])
+            if endpoint != self.endpoint.text():
+                self.endpoint.setText(endpoint)
+                self.load_token()
+        # provider/endpoint changes clear the model, so restore it last.
+        if 'model' in values:
+            self.model.setCurrentText(str(values['model']))
+        if 'output' in values:
+            value = str(values['output'])
+            index = self.output.findData(value)
+            if index < 0 and value:
+                self.output.addItem(value, value)
+                index = self.output.findData(value)
+            self.output.setCurrentIndex(index)
+        for key, field in [('chunk_seconds', self.chunk), ('font_size', self.font_size),
+                           ('background_transparency', self.transparency), ('border_width', self.border_width),
+                           ('history_lines', self.history)]:
+            if key in values:
+                field.setValue(int(values[key]))
+        if 'noise_filter' in values:
+            self.noise.setChecked(bool(values['noise_filter']))
+        if 'auto_scroll' in values:
+            self.scroll.setChecked(bool(values['auto_scroll']))
+        if 'token' in request:
+            self.token.setText(str(request['token']))
+        if 'remember_token' in request:
+            self.remember.setChecked(bool(request['remember_token']))
+        self.captions.document().setMaximumBlockCount(self.history.value())
+        self.save()
+        self.apply_appearance()
+
+    def handle_request(self, request):
+        action = request.get('action', 'state')
+        if action == 'configure':
+            self.configure(request)
+        elif action == 'start':
+            self.show()
+            self.start_capture()
+        elif action == 'stop':
+            self.stop_capture()
+        elif action == 'models':
+            self.refresh_models()
+        elif action == 'suggest':
+            self.auto_select()
+        elif action == 'outputs':
+            self.send('outputs')
+        elif action == 'show':
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        elif action == 'clear':
+            self.captions.clear()
+        elif action == 'close' or (action == 'release' and not self.isVisible()):
+            self.closing = True
+            self.close()
+        return self.snapshot()
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName('Video Trans')
     app.setDesktopFileName('video-trans')
+    app.setQuitOnLastWindowClosed(False)
     palette = QPalette()
     for role, color in ((QPalette.Window, '#20232b'), (QPalette.WindowText, '#e8eaf0'),
                         (QPalette.Base, '#15171c'), (QPalette.AlternateBase, '#292e38'),
@@ -370,11 +460,12 @@ def main():
     app.setStyle('Fusion')
     app.setPalette(palette)
     # Per-user local socket: activating twice raises the existing window.
-    name = 'video-trans-' + str(os.getuid())
+    from bridge import socket_path
+    name = socket_path()
     socket = QLocalSocket()
     socket.connectToServer(name)
     if socket.waitForConnected(300):
-        socket.write(b'raise')
+        socket.write(b'{"action":"state"}\n' if '--controller' in sys.argv else b'{"action":"show"}\n')
         socket.waitForBytesWritten(300)
         return 0
     QLocalServer.removeServer(name)
@@ -383,20 +474,40 @@ def main():
     if not server.listen(name):
         raise RuntimeError('Could not create Video Trans activation socket')
     window = Window()
+    connections = set()
     def activate():
         connection = server.nextPendingConnection()
-        if connection:
+        if not connection:
+            return
+        connections.add(connection)
+        data = bytearray()
+        def receive():
+            data.extend(bytes(connection.readAll()))
+            if len(data) > 65536:
+                connection.disconnectFromServer()
+                return
+            if b'\n' not in data:
+                return
+            try:
+                request = json.loads(bytes(data).split(b'\n', 1)[0])
+                response = window.handle_request(request)
+            except (ValueError, TypeError, AttributeError) as exc:
+                response = dict(error=str(exc))
+            connection.write((json.dumps(response) + '\n').encode())
+            connection.flush()
             connection.disconnectFromServer()
-        window.show()
-        window.raise_()
-        window.activateWindow()
+        connection.readyRead.connect(receive)
+        connection.disconnected.connect(lambda: connections.discard(connection))
+        connection.disconnected.connect(connection.deleteLater)
+        receive()
     server.newConnection.connect(activate)
     signal.signal(signal.SIGTERM, lambda *_: window.close())
     signal.signal(signal.SIGINT, lambda *_: window.close())
     timer = QTimer()
     timer.timeout.connect(lambda: None)
     timer.start(200)
-    window.show()
+    if '--controller' not in sys.argv:
+        window.show()
     return app.exec()
 
 

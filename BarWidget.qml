@@ -1,6 +1,4 @@
 import QtQuick
-import Quickshell
-import Quickshell.Io
 import qs.Ui
 
 BarWidget {
@@ -8,13 +6,18 @@ BarWidget {
   moduleName: "ubruckhaus.video-trans"
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
-  Process { id: launcher; command: ["bash", Qt.resolvedUrl("launch.sh").toString().replace(/^file:\/\//, "")] }
+  readonly property bool opened: panel.opened
+  readonly property bool popoutSwitchClosing: panel.popoutSwitchClosing
+  function open() { panel.open() }
+  function close() { panel.close() }
+  function closeForPopoutSwitch() { panel.closeForPopoutSwitch() }
+  VideoTransPanel { id: panel; bar: root.bar; anchorItem: button; hostWidget: root }
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
     text: "\uf20a"
     tooltipText: "Video Trans — translated video captions"
-    onPressed: launcher.running = true
+    onPressed: panel.toggle()
   }
 }

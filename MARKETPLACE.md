@@ -12,7 +12,7 @@
 
 **Screenshot:** `preview.png` (synthetic captions)
 
-Live translated captions from audio output or an explicitly selected microphone. Local Whisper automatically detects speech language and filters non-speech. Choose llama.cpp, Ollama or an OpenAI-compatible online translator and model, with an automatic local-model suggestion based on your target language. Resizable floating captions with persistent scrollback, Omarchy theme defaults, background transparency and border controls, and cleanup on Stop/Close. German target by default.
+Live translated captions from audio output or an explicitly selected microphone. A native Omarchy panel controls translation; the independent caption overlay is resizable and floating. Local Whisper automatically detects speech language and filters non-speech. Choose llama.cpp, Ollama or an OpenAI-compatible online translator and model, with an automatic local-model suggestion based on your target language. Overlay-only transparency and border controls, persistent scrollback and cleanup on Stop/Close. German target by default.
 
 ## Capabilities
 

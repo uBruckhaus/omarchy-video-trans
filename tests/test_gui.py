@@ -84,6 +84,37 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.provider.currentText(), 'Ollama')
         self.assertEqual(self.window.model.currentText(), 'qwen3:4b')
 
+    def test_overlay_has_no_settings_tab_or_translation_controls(self):
+        self.assertFalse(self.window.tabs.isTabVisible(1))
+        self.assertTrue(self.window.start.isHidden())
+        self.assertTrue(self.window.stop.isHidden())
+        self.assertTrue(self.window.compact.isHidden())
+
+    def test_ipc_snapshot_never_exposes_token(self):
+        self.window.token.setText('private-online-token')
+        state = self.window.snapshot()
+        self.assertTrue(state['key_ready'])
+        self.assertNotIn('private-online-token', json.dumps(state))
+
+    def test_overlay_appearance_change_keeps_unsaved_authentication(self):
+        self.window.token.setText('private-online-token')
+        self.window.configure({'settings': self.window.current_settings() | {'background_transparency': 60}})
+        self.assertEqual(self.window.token.text(), 'private-online-token')
+        self.assertEqual(self.window.transparency.value(), 60)
+
+    def test_closing_panel_keeps_visible_overlay_and_capture(self):
+        self.window.show()
+        self.window.running = True
+        with patch.object(self.window, 'close') as close:
+            self.window.handle_request({'action': 'release'})
+            close.assert_not_called()
+        self.assertTrue(self.window.running)
+
+    def test_closing_panel_releases_hidden_controller(self):
+        with patch.object(self.window, 'close') as close:
+            self.window.handle_request({'action': 'release'})
+            close.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
