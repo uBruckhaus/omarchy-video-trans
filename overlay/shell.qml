@@ -74,6 +74,7 @@ ShellRoot {
     implicitWidth: root.captionWidth
     implicitHeight: root.captionHeight
     color: "transparent"
+    mask: Region { item: surface }
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "video-trans-captions"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -110,19 +111,30 @@ ShellRoot {
           onTextChanged: if (root.view.auto_scroll !== false) Qt.callLater(() => scroll.contentY = Math.max(0, scroll.contentHeight - scroll.height))
         }
       }
-      // Drag the top edge to move the independent caption surface.
+      // Capture plain left drags even over the fully transparent caption area.
       MouseArea {
-        anchors { top: parent.top; left: parent.left; right: parent.right }
-        height: 12
-        cursorShape: Qt.SizeAllCursor
+        id: moveArea
+        anchors.fill: parent
+        preventStealing: true
+        acceptedButtons: Qt.LeftButton
+        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
         property point initial
         property point pointer
-        onPressed: mouse => { initial = Qt.point(root.left, root.top); pointer = mapToGlobal(mouse.x, mouse.y) }
+        onPressed: mouse => {
+          if (mouse.modifiers & Qt.ShiftModifier) { mouse.accepted = false; return }
+          initial = Qt.point(root.left, root.top)
+          pointer = mapToGlobal(mouse.x, mouse.y)
+          root.initialBorder = false
+        }
         onPositionChanged: mouse => {
           if (!pressed) return
           var position = mapToGlobal(mouse.x, mouse.y)
           root.left = Math.max(0, Math.min(root.targetScreen.width - 60, initial.x + position.x - pointer.x))
           root.top = Math.max(0, Math.min(root.targetScreen.height - 60, initial.y + position.y - pointer.y))
+        }
+        onWheel: wheel => {
+          scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height, scroll.contentY - wheel.angleDelta.y / 2))
+          wheel.accepted = true
         }
       }
       Canvas {

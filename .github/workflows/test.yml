@@ -14,4 +14,4 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QPA_PLATFORMTHEME: none
-      - run: bash -n setup.sh launch.sh bridge.sh
+      - run: bash -n setup.sh launch.sh bridge.sh start.sh

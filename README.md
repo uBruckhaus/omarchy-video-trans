@@ -30,7 +30,7 @@ bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh
 
 Omarchy does not execute plugin setup hooks. Run setup explicitly; it downloads an isolated Python 3.12 runtime and pinned dependencies under `~/.local/share/video-trans/runtime`. Select **Whisper model** in the main panel: Tiny, Base, Small, Medium, Large (v3), or Turbo. Click **Download selected Whisper model** to cache it before translation; **Cancel Whisper download** cancels the operation. Downloads never start audio capture or a translation provider. First **Start** also downloads the selected model if needed. Downloads can be cancelled by Stop or Close. A filesystem path to an existing faster-whisper / CTranslate2 model can also be entered in the Whisper-model field. Models such as `tiny.en` are English-only; choose a multilingual model for automatic language detection.
 
-On Omarchy/Wayland the independent caption surface uses Quickshell's **overlay layer**, so it remains above fullscreen video. It belongs to the workspace where it opens: switching workspaces hides it, returning shows the same captions, and capture continues in the background. No Hyprland window rule is required. Drag its top edge to move it and its bottom-right handle to resize it. Stop and Close overlay in the plugin panel close it and release owned resources.
+On Omarchy/Wayland the independent caption surface uses Quickshell's **overlay layer**, so it remains above fullscreen video. It belongs to the workspace where it opens: switching workspaces hides it, returning shows the same captions, and capture continues in the background. No Hyprland window rule is required. Drag anywhere inside it with the plain left mouse button to move it (Shift + drag selects text) and its bottom-right handle to resize it. Scroll the mouse wheel to read earlier captions. Stop and Close overlay in the plugin panel close it and release owned resources.
 
 ## Use
 
@@ -100,3 +100,10 @@ See [MARKETPLACE.md](MARKETPLACE.md) for listing details. MIT licensed. Independ
 The target-language check validates the selected translation target; it does not benchmark model fluency. Whisper detects the **source** language, independently of the target. English-only speech models require an English source override. For online endpoints without a model-list API, provider/model checks remain pending until the first successful translation verifies them.
 
 Optional desktop check: `QT_QPA_PLATFORM=wayland ~/.local/share/video-trans/runtime/bin/python scripts/smoke_fullscreen.py` verifies fullscreen stacking and workspace visibility with a temporary test window.
+
+Optional shortcut in `~/.config/hypr/bindings.lua` (replaces the stock Clipboard manager binding):
+
+```lua
+hl.unbind("SUPER + CTRL + V")
+o.bind("SUPER + CTRL + V", "Video Trans: start translated captions", "bash " .. os.getenv("HOME") .. "/.config/omarchy/plugins/ubruckhaus.video-trans/start.sh")
+```
