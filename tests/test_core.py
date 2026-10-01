@@ -117,6 +117,41 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(json.loads(path.read_text()), {'token': 'secret'})
 
+    def test_credentials_ignore_predictable_temp_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'credentials.json'
+            victim = Path(directory) / 'other.json'
+            victim.write_text('unchanged')
+            path.with_suffix('.tmp').symlink_to(victim)
+            save_json(path, {'token': 'secret'})
+            self.assertEqual(victim.read_text(), 'unchanged')
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text()), {'token': 'secret'})
+
+    def test_credentials_ignore_permissive_temp_and_replace_old_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'credentials.json'
+            old_temp = path.with_suffix('.tmp')
+            old_temp.write_text('unchanged')
+            old_temp.chmod(0o666)
+            path.write_text('old credentials')
+            path.chmod(0o644)
+            save_json(path, {'token': 'secret'})
+            self.assertEqual(old_temp.read_text(), 'unchanged')
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text()), {'token': 'secret'})
+            self.assertEqual(list(Path(directory).glob('.credentials.json.*.tmp')), [])
+
+    def test_failed_credentials_save_preserves_old_file_and_removes_temp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'credentials.json'
+            save_json(path, {'token': 'old'})
+            with patch('core.json.dump', side_effect=RuntimeError('write failed')):
+                with self.assertRaises(RuntimeError):
+                    save_json(path, {'token': 'new'})
+            self.assertEqual(json.loads(path.read_text()), {'token': 'old'})
+            self.assertEqual(list(Path(directory).glob('.credentials.json.*.tmp')), [])
+
     def test_unfinished_reasoning_not_shown(self):
         with self.assertRaises(ValueError):
             clean_translation('<think>still thinking')
