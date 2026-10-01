@@ -16,7 +16,7 @@ The preview uses synthetic example captions, not a recording.
 - Separate speech-model and translation-model selectors. Whisper runs on CPU with int8, leaving GPU memory for your translator.
 - Local llama.cpp router and Ollama support automatic service startup, model discovery and model cleanup. **Auto-select local model** considers the target language, multilingual model family and model size, excluding speech-synthesis, embedding and coding-only models. This is an editable heuristic suggestion, not a quality benchmark.
 - Online endpoint, model and masked API-key / bearer-token configuration. Compatible with the `/v1/models` and `/v1/chat/completions` protocols, rather than every provider's proprietary API.
-- A native Omarchy popup for settings and translation controls, independent of the caption window. Its appearance always follows the shell's default panel components and theme.
+- A native Omarchy popup for settings and translation controls, independent of the caption window. Its popup uses a local snapshot of the original Omarchy controls, with fixed typography and spacing across themes, with the native shell palette and borders.
 - A resizable floating caption window with adjustable font size, background transparency and border thickness. These appearance controls affect **only the overlay**, never the native widget/panel. Overlay background, text and border colors follow the active Omarchy theme; The background is fully transparent with a 1 px border by default. The border appears when the overlay opens or gains focus, and becomes invisible on focus loss without shifting the captions; both can be adjusted, and −1 uses the theme's popup settings. Text stays opaque as background transparency changes. Theme changes are picked up while the window is open. Each caption stays visible for 5 seconds by default, then expires independently. Adjust **Caption duration (seconds)** from 1 to 120 seconds and **Caption font size** in the main plugin controls, including while translating. The overlay can shrink to approximately three lines at the selected font size. Disable **Follow new captions** in the plugin panel to read older captions without being scrolled away.
 - Stop closes the overlay immediately, releases the speech worker and owned resources, then exits the GUI.
 
@@ -128,3 +128,7 @@ o.bind("SUPER + CTRL + V", "Video Trans: toggle translated captions", { launch =
 ```
 
 Super + Ctrl + V toggles the overlay: opening starts translation; closing stops capture and releases owned resources.
+
+## Popup layout and manual
+
+Click **User Manual** in the popup for built-in guidance. See [MANUAL.md](MANUAL.md) for the full manual. Popup layout stays fixed across desktop themes; colors and borders match the native shell.

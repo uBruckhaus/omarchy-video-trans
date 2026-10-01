@@ -2,8 +2,9 @@ import QtQuick
 import QtQuick.Controls as Controls
 import Quickshell
 import Quickshell.Io
-import qs.Commons
-import qs.Ui as Ui
+import "native/Commons"
+import qs.Commons as Theme
+import "native/Ui" as Ui
 
 Ui.Panel {
   id: root
@@ -21,6 +22,8 @@ Ui.Panel {
   property bool advanced: false
   property bool appearance: false
   property bool loaded: false
+  property bool showManualView: false
+  onShowManualViewChanged: panelScroll.contentY = 0
   readonly property bool translating: sessionState.running === true
   readonly property bool stopping: sessionState.stopping === true
   readonly property bool downloading: sessionState.downloading === true
@@ -74,6 +77,7 @@ Ui.Panel {
     contentWidth: fittedContentWidth(Style.space(460))
     contentHeight: fittedContentHeight(content.implicitHeight)
     Flickable {
+      id: panelScroll
       anchors.fill: parent
       contentWidth: width
       contentHeight: content.implicitHeight
@@ -85,12 +89,46 @@ Ui.Panel {
         focus: root.opened
         Keys.onEscapePressed: root.close()
         width: parent.width
-        spacing: Style.spacing.md
-        Ui.PanelHero {
-          title: "Video Trans"
-          meta: root.sessionState.starting ? "Starting translation…" : root.translating ? "Translating · " + (root.config.target || "German") : "Live translated captions"
-          iconComponent: Component { Text { text: "\uf20a"; font.family: Style.font.family; font.pixelSize: Style.font.display; color: Color.accent } }
+        spacing: Style.space(12)
+        Item {
+          width: parent.width
+          height: Style.space(28)
+          Text {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Video Trans"
+            color: Theme.Color.accent
+            font.family: Theme.Style.font.family
+            font.pixelSize: Theme.Style.font.title
+            font.bold: true
+          }
+          Ui.Button {
+            id: manualButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            implicitHeight: Style.space(24)
+            text: root.showManualView ? "✕ Close Manual" : "📖 User Manual"
+            fontSize: Style.font.caption
+            bordered: true
+            focusable: true
+            selected: root.showManualView
+            tooltipText: "Open or close the integrated Video Trans User Manual"
+            onClicked: root.showManualView = !root.showManualView
+          }
         }
+        Text {
+          width: parent.width
+          text: root.showManualView ? "Live translated captions." : root.sessionState.starting ? "Starting translation…" : root.translating ? "Translating · " + (root.config.target || "German") : "Live translated captions"
+          color: Color.foreground
+          opacity: 0.65
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          wrapMode: Text.Wrap
+        }
+        Column {
+          width: parent.width
+          spacing: Style.spacing.md
+          visible: !root.showManualView
         Row {
           spacing: Style.spacing.md
           Ui.Button { text: root.translating ? "Stop" : "Start"; bordered: true; focusable: true; enabled: root.loaded && !root.stopping && !root.busy && !root.downloading; onClicked: root.request({action: root.translating ? "stop" : "start"}) }
@@ -160,6 +198,77 @@ Ui.Panel {
           Row { spacing: Style.spacing.md
             Ui.Button { text: "Close overlay"; focusable: true; onClicked: root.request({action: "close"}) }
           }
+        }
+        }
+        Column {
+          width: parent.width
+          spacing: Style.space(10)
+          visible: root.showManualView
+          Ui.Button { width: parent.width; text: "← Back to Video Trans Controls"; bordered: true; focusable: true; onClicked: root.showManualView = false }
+          Repeater {
+            model: [
+              {
+                            "title": "1. First Session (Speech & Audio)",
+                            "body": "• Run setup.sh once before using the plugin.\n• Play your video, choose Audio output and its playback device.\n• For microphone speech, select Microphone and its device explicitly.\n• Keep source language on auto; choose a multilingual Whisper model and target language.\n• Download the speech model now, or let Start download it when needed."
+              },
+              {
+                            "title": "2. Translation Provider",
+                            "body": "• Choose llama.cpp, Ollama or Online.\n• Refresh models and choose a text model, or use Auto-select local.\n• Local providers require an existing installation and models.\n• For Online, expand Provider and recognition settings, enter endpoint, model and token, then Apply token.\n• Save token locally is optional."
+              },
+              {
+                            "title": "3. Start, Stop & Session Controls",
+                            "body": "• Start begins capture and opens the caption window.\n• Check the startup checklist and status for missing requirements.\n• Closing the popup leaves translation running with a visible overlay.\n• Stop or Close overlay ends capture and releases owned resources.\n• Show captions opens the window without capture; Clear captions removes its text."
+              },
+              {
+                            "title": "4. Caption Window & Mouse Controls",
+                            "body": "• Left-drag moves the window; the bottom-right handle resizes it.\n• Shift + drag selects caption text.\n• Scroll to read older captions; disable Follow new captions to pause automatic scrolling.\n• The overlay stays above fullscreen video on the workspace where it opened."
+              },
+              {
+                            "title": "5. Reading & Overlay Appearance",
+                            "body": "• Caption duration sets how long each paragraph remains visible (default 5 seconds).\n• Caption font size can change during translation.\n• Overlay appearance adjusts transparency, border and retained history.\n• −1 uses theme defaults. These settings affect only the captions."
+              },
+              {
+                            "title": "6. Troubleshooting & Privacy",
+                            "body": "• No captions: check the selected playback device, startup checks and status.\n• Wrong language: use a multilingual Whisper model or override the source language.\n• Slow captions: try smaller recognition or translation models.\n• Audio stays local; recognized text goes to your selected translator.\n• Saved tokens are owner-only plaintext. Cleanup may wait for a provider request."
+              }
+]
+            delegate: Rectangle {
+              required property var modelData
+              width: parent.width
+              implicitHeight: manualSection.implicitHeight + Style.space(16)
+              radius: Style.space(6)
+              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05)
+              border.width: 1
+              border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.15)
+              Column {
+                id: manualSection
+                anchors.fill: parent
+                anchors.margins: Style.space(8)
+                spacing: Style.space(4)
+                Text {
+                  width: parent.width
+                  text: modelData.title
+                  textFormat: Text.PlainText
+                  color: Theme.Color.accent
+                  font.family: Style.font.family
+                  font.pixelSize: Theme.Style.font.bodySmall
+                  font.bold: true
+                  wrapMode: Text.Wrap
+                }
+                Text {
+                  width: parent.width
+                  text: modelData.body
+                  textFormat: Text.PlainText
+                  color: Color.foreground
+                  opacity: 0.85
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.Wrap
+                }
+              }
+            }
+          }
+          Ui.Button { width: parent.width; text: "← Back to Video Trans Controls"; bordered: true; focusable: true; onClicked: root.showManualView = false }
         }
       }
     }
