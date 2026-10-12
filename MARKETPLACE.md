@@ -10,11 +10,11 @@
 
 **Tags:** ai, media, bar
 
-**Screenshot:** `preview.png` (real 0.4.0 screenshots: synthesized narration over a generated test video)
+**Screenshot:** `preview.png` (real screenshots taken with 0.4.0; 0.5.0 adds more caption colours in the same menu: synthesized narration over a generated test video)
 
-Live translated captions over any video, call or microphone: local Whisper, llama.cpp, Ollama or online translation. Guided setup, shortcut actions, black or white text.
+Live translated captions over any video, call or microphone: local Whisper, llama.cpp, Ollama or online translation. Guided setup, shortcut actions, auto-contrast text.
 
-Speech is recognized locally by Whisper and translated by llama.cpp, Ollama or an OpenAI-compatible online API. Captions float above fullscreen video in a movable, resizable window with white or black text, adjustable size and duration. A guided popup names the one next setup step and fixes it with one click. Every action (start, stop, show, clear, text colour, target language, input) is a `video-trans` command, a desktop action and a tray entry, so Launch & Bind can put it on a key. The bar icon turns the theme's green while captions run.
+Speech is recognized locally by Whisper and translated by llama.cpp, Ollama or an OpenAI-compatible online API. Captions float above fullscreen video in a movable, resizable window; the text colour adapts automatically to the video (or pick white, yellow, cyan, green, orange, pink, blue, black or any colour), with adjustable size and duration. A guided popup names the one next setup step and fixes it with one click. Every action (start, stop, show, clear, text colour, target language, input) is a `video-trans` command, a desktop action and a tray entry, so Launch & Bind can put it on a key. The bar icon turns the theme's green while captions run.
 
 ## Capabilities
 
@@ -26,6 +26,7 @@ Speech is recognized locally by Whisper and translated by llama.cpp, Ollama or a
 - Downloads Python dependencies only via explicit setup (popup **Set up now** or `setup.sh`); Whisper downloads the selected model on request or first Start. No telemetry, recorded audio or disk transcript history.
 - Guided setup installs missing system packages (`ffmpeg`, `libpulse`, `quickshell`, `uv`) through the system's graphical authentication prompt, only after the user presses **Set up now**.
 - Adds a managed `~/.local/bin/video-trans` command and `~/.local/share/applications/video-trans.desktop` (desktop actions for shortcuts) from setup or the **Add shortcut actions** button; files it did not create are never replaced.
+- Automatic caption colour (default): while the caption window is open, `grim` captures a 60-pixel strip next to it every 2 s at 5 % scale; only its mean brightness is used, nothing is stored or sent. Any other colour choice stops it.
 - Runs a small tray process (`tray.py`) while the bar widget is loaded; its entries run `video-trans <action>`.
 
 ## Dependencies

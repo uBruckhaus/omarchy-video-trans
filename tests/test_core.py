@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import ppm_luminance, auto_bright, sample_region, caption_colors, backdrop_for, next_text_color, DEFAULTS as CORE_DEFAULTS
 from core import Provider, capture_command, playback_outputs, microphone_inputs, clean_translation, save_json, DEFAULTS, suggest_model, read_theme, local_provider_choice
 
 
@@ -186,6 +187,39 @@ class SuggestionAndThemeTests(unittest.TestCase):
             self.assertEqual(result['background_transparency'], 20)
             self.assertEqual(result['border_width'], 4)
             self.assertEqual(result['border_color'], '#123456')
+
+
+
+class CaptionColourTests(unittest.TestCase):
+    def test_default_is_automatic(self):
+        self.assertEqual(CORE_DEFAULTS['text_color'], 'auto')
+
+    def test_ppm_luminance_and_malformed_input(self):
+        self.assertAlmostEqual(ppm_luminance(b'P6\n2 1\n255\n' + bytes([255] * 6)), 1.0)
+        self.assertAlmostEqual(ppm_luminance(b'P6 1 1 255 ' + bytes([0, 0, 0])), 0.0)
+        for bad in (b'', b'P3\n1 1\n255\n0 0 0', b'P6\n4 4\n255\n' + bytes(3), b'P6\n0 0\n255\n'):
+            self.assertIsNone(ppm_luminance(bad))
+
+    def test_hysteresis_and_unknown_measurement(self):
+        self.assertFalse(auto_bright(False, 0.55))
+        self.assertTrue(auto_bright(False, 0.65))
+        self.assertTrue(auto_bright(True, 0.5))
+        self.assertFalse(auto_bright(True, 0.4))
+        self.assertTrue(auto_bright(True, None))
+
+    def test_sample_region_avoids_the_captions(self):
+        self.assertEqual(sample_region(100, 700, 1500, 240), (100, 640, 1500, 60))
+        self.assertEqual(sample_region(100, 20, 1500, 240), (100, 260, 1500, 60))
+
+    def test_colours(self):
+        theme = dict(foreground='#e8eaf0', background='#15171c')
+        self.assertEqual(caption_colors(theme, 'auto'), ('#ffffff', '#000000'))
+        self.assertEqual(caption_colors(theme, 'auto', bright=True), ('#000000', '#ffffff'))
+        self.assertEqual(caption_colors(theme, 'theme'), ('#e8eaf0', '#15171c'))
+        self.assertEqual(caption_colors(theme, '<b>'), ('#e8eaf0', '#15171c'))
+        self.assertEqual(backdrop_for('#ffe14d'), '#000000')
+        self.assertEqual(backdrop_for('#1f4fd1'), '#ffffff')
+        self.assertEqual(next_text_color('black'), 'auto')
 
 
 if __name__ == '__main__':

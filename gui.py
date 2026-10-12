@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QScrollArea,
     QPushButton, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from core import CONFIG, LANGUAGES, caption_colors, load_settings, save_json, read_theme
+from core import (CONFIG, LANGUAGES, auto_bright, caption_colors, load_settings, ppm_luminance, read_theme, sample_region,
+                  save_json, text_color_options, valid_text_color)
 
 
 class ResizeGrip(QWidget):
@@ -37,6 +38,9 @@ class ResizeGrip(QWidget):
                 event.accept()
                 return
         super().mousePressEvent(event)
+
+
+CONTRAST_LIMIT = 256 * 1024  # bytes of PPM from one brightness sample (normally < 2 KiB)
 
 
 class Window(QMainWindow):
@@ -86,10 +90,18 @@ class Window(QMainWindow):
         clear = QPushButton('Clear')
         clear.clicked.connect(self.clear_captions)
         self.scroll = QCheckBox('Follow new text')
+        self.auto_bright = False
+        self.overlay_rect = None
+        self.contrast_started = 0.0
+        self.contrast_process = QProcess(self)
+        self.contrast_process.setStandardErrorFile(QProcess.nullDevice())
+        self.contrast_process.readyReadStandardOutput.connect(self.contrast_output)
+        self.contrast_process.finished.connect(self.contrast_done)
+        self.contrast_timer = QTimer(self)
+        self.contrast_timer.timeout.connect(self.sample_contrast)
+        self.contrast_timer.start(2000)
         self.text_color = QComboBox()
-        for value, label in (('theme', 'Omarchy theme'), ('white', 'White'), ('black', 'Black')):
-            self.text_color.addItem(label, value)
-        self.text_color.setCurrentIndex(max(0, self.text_color.findData(self.settings.get('text_color', 'theme'))))
+        self.set_text_color(self.settings.get('text_color') if valid_text_color(self.settings.get('text_color')) else 'auto')
         self.scroll.setChecked(self.settings['auto_scroll'])
         for item in (self.start, self.stop, self.compact, clear, self.scroll):
             buttons.addWidget(item)
@@ -274,7 +286,7 @@ class Window(QMainWindow):
         theme = read_theme()
         transparency = self.transparency.value()
         width = self.border_width.value()
-        text, back = caption_colors(theme, self.text_color.currentData())
+        text, back = caption_colors(theme, self.text_color.currentData(), self.auto_bright)
         return dict(open=self.layer_open, text=self.captions.toPlainText(), status=self.status.text(), caption_received=self.caption_received,
                     theme=theme | dict(foreground=text, background=back), font_size=self.font_size.value(), auto_scroll=self.scroll.isChecked(),
                     background_transparency=theme['background_transparency'] if transparency < 0 else transparency,
@@ -296,7 +308,7 @@ class Window(QMainWindow):
         self.captions.setFont(QFont('sans-serif', self.font_size.value()))
         self.setMinimumHeight(QFontMetrics(self.captions.font()).lineSpacing() * 3 + 28)
         theme = read_theme()
-        text, back = caption_colors(theme, self.text_color.currentData())
+        text, back = caption_colors(theme, self.text_color.currentData(), self.auto_bright)
         background = QColor(back)
         foreground = QColor(text)
         accent = QColor(theme['accent'])
@@ -544,12 +556,56 @@ class Window(QMainWindow):
             if self.closing:
                 QApplication.instance().quit()
 
+    def track_overlay(self, request):
+        """The caption window reports its logical screen rectangle with every poll."""
+        try:
+            rect = tuple(int(request[key]) for key in ('x', 'y', 'width', 'height'))
+        except (KeyError, TypeError, ValueError):
+            self.overlay_rect = None
+            return
+        visible = request.get('visible') is True and all(-100000 < v < 100000 for v in rect) and rect[2] > 0 and rect[3] > 0
+        self.overlay_rect = rect if visible else None
+
+    def sample_contrast(self):
+        """Automatic text colour: measure the video just above (or below) the captions.
+        A tiny downscaled grim capture of that strip, read from memory and discarded;
+        only its mean brightness is kept."""
+        if self.contrast_process.state() != QProcess.NotRunning:
+            if time.monotonic() - self.contrast_started > 5:
+                self.contrast_process.kill()  # one overall deadline per sample
+            return
+        if self.text_color.currentData() != 'auto' or not self.overlay_visible() or not self.overlay_rect:
+            return
+        self.contrast_started = time.monotonic()
+        x, y, width, height = sample_region(*self.overlay_rect)
+        self.contrast_process.start('grim', ['-g', f'{x},{y} {width}x{height}', '-s', '0.05', '-t', 'ppm', '-'])
+
+    def contrast_output(self):
+        if self.contrast_process.bytesAvailable() > CONTRAST_LIMIT:
+            self.contrast_process.kill()
+
+    def contrast_done(self, code, status):
+        data = bytes(self.contrast_process.readAllStandardOutput())
+        if code != 0 or status != QProcess.NormalExit or len(data) > CONTRAST_LIMIT:
+            return
+        bright = auto_bright(self.auto_bright, ppm_luminance(data))
+        if bright != self.auto_bright:
+            self.auto_bright = bright
+            self.apply_appearance()
+
+    def set_text_color(self, value):
+        """Select a preset or custom '#rrggbb' caption colour (callers validate)."""
+        for option in text_color_options(value):
+            if self.text_color.findData(option['value']) < 0:
+                self.text_color.addItem(option['label'], option['value'])
+        self.text_color.setCurrentIndex(self.text_color.findData(value))
+
     def snapshot(self):
         return dict(settings=self.current_settings(), models=self.models, checks=self.checks,
                     outputs=[dict(name=self.output.itemData(i), label=self.output.itemText(i)) for i in range(self.output.count())],
                     running=self.running, starting=self.starting, downloading=self.downloading, stopping=self.stopping, overlay=self.overlay_visible(),
                     key_ready=bool(self.token.text()), remember_token=self.remember.isChecked(),
-                    status=self.status.text())
+                    status=self.status.text(), text_colors=text_color_options(self.text_color.currentData()))
 
     def configure(self, request):
         values = request.get('settings', {})
@@ -586,10 +642,9 @@ class Window(QMainWindow):
         if 'noise_filter' in values:
             self.noise.setChecked(bool(values['noise_filter']))
         if 'text_color' in values:
-            index = self.text_color.findData(str(values['text_color']))
-            if index < 0:
-                raise ValueError('Caption text colour must be theme, white or black')
-            self.text_color.setCurrentIndex(index)
+            if not valid_text_color(values['text_color']):
+                raise ValueError('Caption text colour must be a preset name or #rrggbb')
+            self.set_text_color(values['text_color'])
         if 'auto_scroll' in values:
             self.scroll.setChecked(bool(values['auto_scroll']))
         if 'token' in request:
@@ -604,6 +659,7 @@ class Window(QMainWindow):
     def handle_request(self, request):
         action = request.get('action', 'state')
         if action == 'overlay-state':
+            self.track_overlay(request)
             return self.overlay_state()
         elif action == 'overlay-geometry':
             self.resize(max(430, min(6000, int(request['width']))), max(230, min(4000, int(request['height']))))

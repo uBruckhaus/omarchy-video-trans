@@ -64,11 +64,18 @@ class TrayTests(unittest.TestCase):
 
     def test_caption_text_submenu(self):
         with patch.object(self.tray, 'run') as run:
-            self.tray.color_actions['Black'].trigger()
-        run.assert_called_once_with('text-color', 'black')
+            self.tray.color_actions['black'].trigger()
+            next(a for a in self.tray.menu.actions() if a.text() == 'Next caption text colour').trigger()
+        run.assert_any_call('text-color', 'black')
+        run.assert_any_call('text-color', 'next')
+        self.assertEqual(self.tray.color_actions['auto'].text(), 'Automatic · white or black for the video behind')
         self.tray.state = dict(running=True, settings=DEFAULTS | dict(text_color='white'))
         self.tray.refresh()
-        self.assertTrue(self.tray.color_actions['White'].isChecked())
+        self.assertTrue(self.tray.color_actions['white'].isChecked())
+        self.tray.state = dict(running=True, settings=DEFAULTS | dict(text_color='#abcdef'))
+        self.tray.refresh()
+        self.assertTrue(self.tray.color_actions['#abcdef'].isChecked())
+        self.assertEqual(self.tray.color_actions['#abcdef'].text(), 'Custom #abcdef')
 
     def test_off_state_comes_from_settings_file(self):
         self.tray.disconnected()

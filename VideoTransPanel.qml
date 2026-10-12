@@ -45,6 +45,13 @@ Ui.Panel {
   readonly property bool runtimeReady: loaded && !steps.some(function(s) { return s.id === "runtime" && !s.ok })
   readonly property bool ready: loaded && steps.length > 0 && failedSteps.length === 0
   readonly property var languages: ["German", "English", "French", "Spanish", "Italian", "Portuguese", "Dutch", "Polish", "Ukrainian", "Russian", "Japanese", "Chinese", "Korean", "Arabic", "Hindi", "Turkish", "Indonesian", "Vietnamese"]
+  // Caption colour choices come from the controller (core.TEXT_COLORS); the fallback keeps the
+  // picker usable before the first answer.
+  readonly property var textColorOptions: sessionState.text_colors && sessionState.text_colors.length ? sessionState.text_colors : [{value: "auto", label: "Automatic · white or black for the video behind"}, {value: "theme", label: "Omarchy theme"}, {value: "white", label: "White"}, {value: "black", label: "Black"}]
+  readonly property string textColorLabel: {
+    for (var i = 0; i < textColorOptions.length; i++) if (textColorOptions[i].value === config.text_color) return textColorOptions[i].label
+    return config.text_color || "auto"
+  }
   readonly property var whisperModels: [{value: "tiny", label: "Tiny · 75 MB · fastest"}, {value: "base", label: "Base · 145 MB"}, {value: "small", label: "Small · 480 MB · recommended"}, {value: "medium", label: "Medium · 1.5 GB"}, {value: "large-v3", label: "Large v3 · 3 GB · most accurate"}, {value: "turbo", label: "Turbo · 1.6 GB · large and fast"}]
   readonly property string deviceLabel: {
     for (var i = 0; i < deviceOptions.length; i++) if (deviceOptions[i].value === config.output) return deviceOptions[i].label
@@ -324,7 +331,7 @@ Ui.Panel {
           GroupCard {
             icon: ""
             title: "Captions"
-            summary: (root.config.font_size || 24) + " px · " + (root.config.caption_seconds || 5) + " s" + (root.config.text_color === "black" ? " · black text" : root.config.text_color === "white" ? " · white text" : "") + (root.config.auto_scroll === false ? " · paused" : "")
+            summary: (root.config.font_size || 24) + " px · " + (root.config.caption_seconds || 5) + " s" + (root.config.text_color && root.config.text_color !== "auto" && root.config.text_color !== "theme" ? " · " + root.textColorLabel.toLowerCase() + " text" : "") + (root.config.auto_scroll === false ? " · paused" : "")
             expanded: root.showCaptionsGroup
             onToggled: root.showCaptionsGroup = !root.showCaptionsGroup
             Flow {
@@ -333,7 +340,7 @@ Ui.Panel {
               Ui.Button { focusable: true; text: "Close caption window"; bordered: true; enabled: root.sessionState.overlay === true; onClicked: root.request({action: "close"}) }
             }
             Ui.Toggle { width: parent.width; label: "Follow new captions"; checked: root.config.auto_scroll !== false; onClicked: root.set("auto_scroll", !checked) }
-            Ui.Dropdown { id: textColorPicker; width: parent.width; label: "Caption text · readable on any video"; options: [{value: "theme", label: "Omarchy theme"}, {value: "white", label: "White · on a dark backdrop"}, {value: "black", label: "Black · on a light backdrop, for bright video"}]; value: root.config.text_color || "theme"; onChanged: { root.set("text_color", value); textColorPicker.value = Qt.binding(function() { return root.config.text_color || "theme" }) } }
+            Ui.Dropdown { id: textColorPicker; width: parent.width; label: "Caption text colour · backdrop adapts for contrast"; options: root.textColorOptions; value: root.config.text_color || "auto"; onChanged: { root.set("text_color", value); textColorPicker.value = Qt.binding(function() { return root.config.text_color || "auto" }) } }
             Ui.NumberField { label: "Show each caption for (seconds)"; from: 1; to: 120; value: root.config.caption_seconds || 5; onModified: root.set("caption_seconds", value) }
             Ui.NumberField { label: "Caption font size"; from: 12; to: 64; value: root.config.font_size || 24; onModified: root.set("font_size", value) }
             Ui.Button { focusable: true; width: parent.width; text: root.showAppearance ? "▾ Caption window appearance" : "▸ Caption window appearance"; bordered: true; onClicked: root.showAppearance = !root.showAppearance }
@@ -398,7 +405,7 @@ Ui.Panel {
               },
               {
                 "title": "5. Caption Window",
-                "body": "• Left-drag moves it; the bottom-right handle (shown while the pointer is over it) resizes it. Shift + drag selects text.\n• Caption text: white for dark video, black for bright video; the backdrop takes the opposite colour.\n• Scroll for older captions; turn off Follow new captions to stop automatic scrolling.\n• Captions group: display duration, font size and window appearance (−1 uses the theme default).\n• The window stays above fullscreen video on the workspace where it opened."
+                "body": "• Left-drag moves it; the bottom-right handle (shown while the pointer is over it) resizes it. Shift + drag selects text.\n• Caption text colour: Automatic (default) measures the video just above the captions every 2 s and picks white or black; or choose the theme, white, yellow, cyan, green, orange, pink, blue or black. The backdrop adapts for contrast. Next caption text colour cycles through them.\n• Scroll for older captions; turn off Follow new captions to stop automatic scrolling.\n• Captions group: display duration, font size and window appearance (−1 uses the theme default).\n• The window stays above fullscreen video on the workspace where it opened."
               },
               {
                 "title": "6. Shortcuts",

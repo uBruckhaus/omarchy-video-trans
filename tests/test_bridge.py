@@ -54,8 +54,19 @@ class CommandTests(unittest.TestCase):
         with patch.object(bridge, 'request', side_effect=FileNotFoundError):
             bridge.command(['text-color', 'white'])
         self.assertEqual(core.load_settings()['text_color'], 'white')
+        for bad in ('red', '#12345', '#gggggg', '<b>'):
+            with self.assertRaises(ValueError):
+                bridge.command(['text-color', bad])
+        with patch.object(bridge, 'change_setting', return_value={}) as change:
+            bridge.command(['text-color', '#ABCDEF'])
+        change.assert_called_once_with('text_color', '#abcdef')
+        for current, expected in (('auto', 'theme'), ('black', 'auto'), ('#123456', 'auto')):
+            with patch.object(bridge, 'send', return_value=dict(settings=dict(text_color=current))), \
+                 patch.object(bridge, 'change_setting', return_value={}) as change:
+                bridge.command(['text-color', 'next'])
+            change.assert_called_once_with('text_color', expected)
         with self.assertRaises(ValueError):
-            bridge.command(['text-color', 'red'])
+            bridge.save_offline(dict(text_color='nonsense'))
 
     def test_font_steps_and_clamps(self):
         for current, word, expected in ((24, 'bigger', 28), (24, 'smaller', 20), (62, 'bigger', 64), (14, 'smaller', 12)):

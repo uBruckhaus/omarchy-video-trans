@@ -4,7 +4,7 @@ Live translated captions for Omarchy, from **audio output or an explicitly selec
 
 ![Video Trans: captions over video, the bar popup and its Launch & Bind actions](preview.png)
 
-The preview shows real captions from version 0.4.0: an English narration synthesized locally (Kokoro) over a generated test video, translated to German by Whisper and a local llama.cpp model.
+The preview shows real captions, taken with version 0.4.0 (0.5.0 adds automatic and more caption colours in the same Captions menu): an English narration synthesized locally (Kokoro) over a generated test video, translated to German by Whisper and a local llama.cpp model.
 
 **[User manual](MANUAL.md)** · **[Marketplace description](MARKETPLACE.md)** · **[MIT license](LICENSE)**
 
@@ -46,7 +46,7 @@ The popup follows Screen Narrator's layout: a summary of the active setup, **▶
 
 - **Listening** — capture **Audio output** (what you hear: video, calls) or **Microphone**, the device, and the Whisper model with its download. **Recognition options** holds the spoken-language override, noise suppression and chunk length. Audio output captures every application playing through that device; mute unrelated audio.
 - **Translation** — target language, translator (llama.cpp, Ollama or Online) and model. **Choose automatically** considers the target language, multilingual model family and model size, excluding speech-synthesis, embedding and coding-only models; it is a heuristic, not a benchmark, and never downloads models. **Provider settings…** opens a subpage for the server address, model ID and API key (paste with Ctrl+V; Backspace returns).
-- **Captions** — clear or close the caption window, follow new captions, **Caption text** (Omarchy theme, white, or black for bright video; the backdrop takes the opposite colour), display duration, font size (12–64) and **Caption window appearance** (transparency, border, history; `−1` uses the Omarchy theme default).
+- **Captions** — clear or close the caption window, follow new captions, **Caption text colour** (Automatic by default: white or black, whichever reads better on the video just above the captions; or the Omarchy theme, white, yellow, cyan, green, orange, pink, blue, black or any `#rrggbb`; the backdrop adapts for contrast), display duration, font size (12–64) and **Caption window appearance** (transparency, border, history; `−1` uses the Omarchy theme default).
 
 **▶ Start** opens the caption window and begins translation; if a requirement fails, a startup check lists target language, audio capture, Whisper, provider and model with ✓ / ✕. **Captions** opens the window without capturing. The bar icon turns the theme's green while captions run; right-click it to start or stop without opening the popup. Closing the popup leaves captions running; **■ Stop** closes the window, releases owned models and services and exits the controller. Settings save immediately, also while Video Trans is off.
 
@@ -56,7 +56,7 @@ Audio is processed in overlapping 5-second chunks by default. Larger chunks impr
 
 Setup adds the `video-trans` command and a **Video Trans** application entry whose
 desktop actions are **Start / stop captions**, **Start captions**, **Stop captions**,
-**Show captions**, **Clear captions**, **Follow new captions on / off**, **Switch caption text black / white**, **Larger caption text**, **Smaller caption text**, **Capture audio
+**Show captions**, **Clear captions**, **Follow new captions on / off**, **Switch caption text black / white**, **Next caption text colour**, **Larger caption text**, **Smaller caption text**, **Capture audio
 output**, **Capture microphone**, **Download Whisper model**, **Auto-select local model**
 and **Refresh models**. In Launch & Bind, open **Apps → Video Trans → Shortcuts**, choose
 the action and assign your key. The default application action opens the bar popup.
@@ -69,7 +69,7 @@ The same actions work from a terminal:
 video-trans toggle | start | stop | show | clear
 video-trans follow [on|off|toggle]
 video-trans font bigger|smaller|<12-64>     # caption text size
-video-trans text-color white|black|theme|toggle
+video-trans text-color auto|theme|white|yellow|cyan|green|orange|pink|blue|black|#rrggbb|next|toggle
 video-trans target French          # one of the popup's target languages
 video-trans input Microphone       # or "Audio output"
 video-trans download | cancel-download | models | suggest
@@ -106,6 +106,7 @@ Whisper still processes audio locally. **Only recognized text is sent to the sel
 
 ## Resource lifecycle and local data
 
+- **Automatic caption colour** (the default) samples the screen: every 2 seconds, while the caption window is open and Automatic is selected, `grim` captures a 60-pixel strip just above the caption window (below it when the window touches the top), downscaled to 5 %. The image is read from memory, only its mean brightness is kept, and nothing is stored, logged or sent anywhere. Choose any other caption colour to stop the sampling.
 - The shell widget loads no AI model. Simply opening the native popup reads settings/device metadata without starting the overlay process. Changing settings or requesting an action starts a separate hidden caption controller as needed; refreshing models may start the selected local service, but does not itself request inference. Closing a popup without an open overlay releases that controller. A private owner-only local socket connects the native panel and caption process; token values are never returned in panel status responses.
 - Stop hides the overlay immediately, terminates capture, completes any in-flight inference request, unloads owned translation models, stops owned services and exits the speech worker process. Close hides the window immediately and waits asynchronously for this cleanup before exiting.
 - Model downloads run as cancellable children. Ordinary provider requests have a 60-second read timeout; service shutdown may take up to 70 seconds. Stop/Close may take time while an inference request finishes.

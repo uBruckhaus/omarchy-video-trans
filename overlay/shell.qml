@@ -50,7 +50,11 @@ ShellRoot {
     id: socket
     path: Quickshell.env("VIDEO_TRANS_SOCKET")
     onConnectedChanged: if (connected) {
-      var payload = root.queued || {action: "overlay-state"}
+      // The controller samples the video just above the captions for the automatic text colour.
+      var payload = root.queued || {action: "overlay-state", visible: panel.visible,
+                                    x: Math.round((root.targetScreen ? root.targetScreen.x : 0) + root.left),
+                                    y: Math.round((root.targetScreen ? root.targetScreen.y : 0) + root.top),
+                                    width: root.captionWidth, height: root.captionHeight}
       root.queued = null
       write(JSON.stringify(payload) + "\n")
       flush()

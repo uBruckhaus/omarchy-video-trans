@@ -14,21 +14,98 @@ CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'vid
 DEFAULTS = dict(provider='llama.cpp', endpoint='http://127.0.0.1:8080', model='',
                 speech_provider='Whisper (local)', audio_input='Audio output',
                 target='German', source='auto', speech_model='small', chunk_seconds=5,
-                noise_filter=True, font_size=24, caption_seconds=5, background_transparency=100, border_width=1, history_lines=500, text_color='theme',
+                noise_filter=True, font_size=24, caption_seconds=5, background_transparency=100, border_width=1, history_lines=500, text_color='auto',
                 output='', auto_scroll=True)
 LANGUAGES = ['German', 'English', 'French', 'Spanish', 'Italian', 'Portuguese',
              'Dutch', 'Polish', 'Ukrainian', 'Russian', 'Japanese', 'Chinese',
              'Korean', 'Arabic', 'Hindi', 'Turkish', 'Indonesian', 'Vietnamese']
 
 
-# Caption text colour: the theme's, or white / black for very dark or very bright video.
-# The caption background takes the opposite colour so the text stands out at any transparency.
-TEXT_COLORS = {'white': ('#ffffff', '#000000'), 'black': ('#000000', '#ffffff')}
+# Caption text colours: value -> (label, text, backdrop). The backdrop is dark behind light
+# colours and light behind dark ones, so captions stand out at any background transparency.
+# 'auto' (default) picks white or black from the brightness behind the captions; 'theme' uses
+# the Omarchy theme; any '#rrggbb' value is accepted as a custom colour.
+TEXT_COLORS = {
+    'auto': ('Automatic · white or black for the video behind', None, None),
+    'theme': ('Omarchy theme', None, None),
+    'white': ('White', '#ffffff', '#000000'),
+    'yellow': ('Yellow', '#ffe14d', '#000000'),
+    'cyan': ('Cyan', '#5ce1ff', '#000000'),
+    'green': ('Green', '#7ee787', '#000000'),
+    'orange': ('Orange', '#ffad42', '#000000'),
+    'pink': ('Pink', '#ff8ad8', '#000000'),
+    'blue': ('Blue', '#1f4fd1', '#ffffff'),
+    'black': ('Black', '#000000', '#ffffff'),
+}
+HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 
 
-def caption_colors(theme, choice):
-    """(text, background) for the caption window."""
-    return TEXT_COLORS.get(choice, (theme['foreground'], theme['background']))
+def valid_text_color(value):
+    return isinstance(value, str) and (value in TEXT_COLORS or bool(HEX_COLOR.match(value)))
+
+
+def backdrop_for(text):
+    """Black behind light text, white behind dark text (relative luminance)."""
+    r, g, b = (int(text[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return '#000000' if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.45 else '#ffffff'
+
+
+def caption_colors(theme, choice, bright=False):
+    """(text, background) for the caption window; `bright` is the automatic measurement."""
+    if choice == 'auto':
+        return ('#000000', '#ffffff') if bright else ('#ffffff', '#000000')
+    if choice in TEXT_COLORS and choice != 'theme':
+        return TEXT_COLORS[choice][1:]
+    if isinstance(choice, str) and HEX_COLOR.match(choice):
+        return choice.lower(), backdrop_for(choice)
+    return theme['foreground'], theme['background']
+
+
+def ppm_luminance(data):
+    """Mean relative luminance (0..1) of a binary 8-bit PPM (grim -t ppm), or None."""
+    match = re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s', data[:64])
+    if not match:
+        return None
+    width, height = int(match.group(1)), int(match.group(2))
+    pixels = data[match.end():match.end() + width * height * 3]
+    if not width or not height or len(pixels) < width * height * 3:
+        return None
+    count = width * height
+    red, green, blue = sum(pixels[0::3]), sum(pixels[1::3]), sum(pixels[2::3])
+    return (0.2126 * red + 0.7152 * green + 0.0722 * blue) / (255 * count)
+
+
+def auto_bright(previous, luminance):
+    """Hysteresis, so captions do not flicker between white and black on mid-grey video."""
+    if luminance is None:
+        return previous
+    return luminance > 0.45 if previous else luminance > 0.6
+
+
+def sample_region(x, y, width, height, band=60):
+    """Logical screen region (x, y, w, h) just above the caption window (below it when the
+    window touches the top), so the captions themselves never affect the measurement."""
+    if y >= band:
+        return int(x), int(y - band), int(width), band
+    return int(x), int(y + height), int(width), band
+
+
+def text_color_label(value):
+    return TEXT_COLORS[value][0] if value in TEXT_COLORS else 'Custom ' + str(value).lower()
+
+
+def text_color_options(current='theme'):
+    """Choices for the popup and tray: the presets, plus the current custom colour."""
+    options = [dict(value=value, label=label) for value, (label, _, _) in TEXT_COLORS.items()]
+    if valid_text_color(current) and current not in TEXT_COLORS:
+        options.append(dict(value=current, label=text_color_label(current)))
+    return options
+
+
+def next_text_color(current):
+    """The preset after `current` (a custom colour continues with the first preset)."""
+    order = list(TEXT_COLORS)
+    return order[(order.index(current) + 1) % len(order)] if current in order else order[0]
 
 
 def read_theme():

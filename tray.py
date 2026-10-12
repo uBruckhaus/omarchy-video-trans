@@ -19,7 +19,7 @@ from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from bridge import socket_path
-from core import LANGUAGES, load_settings
+from core import LANGUAGES, TEXT_COLORS, load_settings, text_color_label, valid_text_color
 
 ROOT = Path(__file__).resolve().parent
 INPUTS = ['Audio output', 'Microphone']
@@ -60,7 +60,11 @@ class Tray(QSystemTrayIcon):
         self.follow_action = menu.addAction('Follow new captions')
         self.follow_action.setCheckable(True)
         self.follow_action.triggered.connect(lambda checked: self.run('follow', 'on' if checked else 'off'))
-        self.color_actions = self.choices('Caption text', ['Omarchy theme', 'White', 'Black'], 'text-color')
+        self.color_menu = menu.addMenu('Caption text')
+        self.color_group = QActionGroup(self.color_menu)
+        self.color_actions = {}
+        self.fill_colors(TEXT_COLORS)
+        menu.addAction('Next caption text colour', lambda: self.run('text-color', 'next'))
         menu.addAction('Larger caption text', lambda: self.run('font', 'bigger'))
         menu.addAction('Smaller caption text', lambda: self.run('font', 'smaller'))
         menu.addSeparator()
@@ -92,10 +96,19 @@ class Tray(QSystemTrayIcon):
             action = menu.addAction(value)
             action.setCheckable(True)
             group.addAction(action)
-            argument = {'Omarchy theme': 'theme', 'White': 'white', 'Black': 'black'}.get(value, value) if command == 'text-color' else value
-            action.triggered.connect(lambda checked=False, v=argument: self.run(command, v))
+            action.triggered.connect(lambda checked=False, v=value: self.run(command, v))
             actions[value] = action
         return actions
+
+    def fill_colors(self, values):
+        """Caption text presets plus the current custom colour; fixed labels per value."""
+        for value in values:
+            if value not in self.color_actions:
+                action = self.color_menu.addAction(text_color_label(value))
+                action.setCheckable(True)
+                self.color_group.addAction(action)
+                action.triggered.connect(lambda checked=False, v=value: self.run('text-color', v))
+                self.color_actions[value] = action
 
     def icon(self, running):
         """A caption badge: outlined while off, filled in the theme's green while translating."""
@@ -184,7 +197,9 @@ class Tray(QSystemTrayIcon):
         self.setIcon(self.icon(self.running))
         self.setToolTip('Video Trans — ' + ('translating → ' + plain(settings.get('target', ''), 40) if self.running else status))
         self.follow_action.setChecked(settings.get('auto_scroll', True) is not False)
-        color = {'white': 'White', 'black': 'Black'}.get(settings.get('text_color'), 'Omarchy theme')
+        color = settings.get('text_color', 'auto')
+        color = color if valid_text_color(color) else 'auto'
+        self.fill_colors([color])
         for actions, current in ((self.target_actions, settings.get('target')), (self.input_actions, settings.get('audio_input')),
                                  (self.color_actions, color)):
             for value, action in actions.items():

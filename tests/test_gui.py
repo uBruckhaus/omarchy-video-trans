@@ -41,16 +41,53 @@ class WindowFixture(unittest.TestCase):
 
 
 class WindowTests(WindowFixture):
-    def test_caption_text_colour_switches_with_contrasting_backdrop(self):
-        theme = self.window.overlay_state()['theme']
-        for choice, text, back in (('black', '#000000', '#ffffff'), ('white', '#ffffff', '#000000')):
+    def test_caption_text_colour_presets_custom_and_theme(self):
+        self.assertEqual(self.window.current_settings()['text_color'], 'auto')  # default
+        theme = gui.read_theme()
+        for choice, text, back in (('black', '#000000', '#ffffff'), ('white', '#ffffff', '#000000'),
+                                   ('yellow', '#ffe14d', '#000000'), ('#FFCC00', '#ffcc00', '#000000'),
+                                   ('#102040', '#102040', '#ffffff')):
             self.window.configure(dict(settings=dict(text_color=choice)))
             state = self.window.overlay_state()['theme']
             self.assertEqual((state['foreground'], state['background']), (text, back))
             self.assertIn('color: ' + text, self.window.centralWidget().styleSheet())
+        self.assertIn(dict(value='#102040', label='Custom #102040'), self.window.snapshot()['text_colors'])
         self.window.configure(dict(settings=dict(text_color='theme')))
         self.assertEqual(self.window.overlay_state()['theme']['foreground'], theme['foreground'])
-        self.assertEqual(self.window.current_settings()['text_color'], 'theme')
+
+    def test_automatic_colour_follows_measured_brightness(self):
+        self.window.configure(dict(settings=dict(text_color='auto')))
+        self.assertEqual(self.window.overlay_state()['theme']['foreground'], '#ffffff')
+        bright = b'P6\n2 1\n255\n' + bytes([250, 250, 250] * 2)
+        self.window.contrast_process = Mock()
+        self.window.contrast_process.readAllStandardOutput.return_value = bright
+        self.window.contrast_done(0, gui.QProcess.NormalExit)
+        self.assertEqual(self.window.overlay_state()['theme']['foreground'], '#000000')
+        self.window.contrast_process.readAllStandardOutput.return_value = b'P6\n2 1\n255\n' + bytes([10] * 6)
+        self.window.contrast_done(0, gui.QProcess.NormalExit)
+        self.assertEqual(self.window.overlay_state()['theme']['foreground'], '#ffffff')
+        self.window.contrast_process.readAllStandardOutput.return_value = b'not an image'
+        self.window.contrast_done(0, gui.QProcess.NormalExit)
+        self.assertEqual(self.window.overlay_state()['theme']['foreground'], '#ffffff')
+
+    def test_sampling_runs_only_for_automatic_and_a_visible_window(self):
+        self.window.contrast_process = Mock()
+        self.window.contrast_process.state.return_value = gui.QProcess.NotRunning
+        self.window.handle_request(dict(action='overlay-state', visible=True, x=100, y=700, width=1500, height=240))
+        with patch.object(self.window, 'overlay_visible', return_value=True):
+            self.window.configure(dict(settings=dict(text_color='white')))
+            self.window.sample_contrast()
+            self.window.contrast_process.start.assert_not_called()
+            self.window.configure(dict(settings=dict(text_color='auto')))
+            self.window.sample_contrast()
+        self.window.contrast_process.start.assert_called_once_with(
+            'grim', ['-g', '100,640 1500x60', '-s', '0.05', '-t', 'ppm', '-'])
+        self.window.contrast_process.state.return_value = gui.QProcess.Running
+        self.window.contrast_started = gui.time.monotonic() - 6
+        self.window.sample_contrast()
+        self.window.contrast_process.kill.assert_called_once()
+        self.window.handle_request(dict(action='overlay-state', visible=True, x='1;rm', y=0, width=1, height=1))
+        self.assertIsNone(self.window.overlay_rect)
 
     def test_caption_text_colour_changes_while_translating(self):
         self.window.running = True
@@ -61,6 +98,8 @@ class WindowTests(WindowFixture):
     def test_unknown_text_colour_is_rejected(self):
         with self.assertRaises(ValueError):
             self.window.configure(dict(settings=dict(text_color='<b>red</b>')))
+        with self.assertRaises(ValueError):
+            self.window.configure(dict(settings=dict(text_color='#12345')))
 
     def test_whisper_first_and_output_default(self):
         self.assertEqual(self.window.form.labelForField(self.window.speech_provider).text(), 'Speech provider')

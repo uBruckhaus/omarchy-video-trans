@@ -30,7 +30,7 @@ def request(payload):
 
 
 def offline_state():
-    from core import load_settings, audio_devices, CONFIG
+    from core import load_settings, audio_devices, CONFIG, text_color_options
     settings = load_settings()
     try:
         outputs = audio_devices(settings['audio_input'])
@@ -45,7 +45,8 @@ def offline_state():
         pass
     key = settings['provider'] + ' ' + settings['endpoint'].strip().rstrip('/')
     return dict(settings=settings, models=[], outputs=outputs, checks=[], running=False, starting=False, downloading=False, stopping=False,
-                overlay=False, status=status, key_ready=bool(tokens.get(key)), remember_token=bool(tokens.get(key)))
+                overlay=False, status=status, key_ready=bool(tokens.get(key)), remember_token=bool(tokens.get(key)),
+                text_colors=text_color_options(settings.get('text_color', 'auto')))
 
 
 def save_offline(values):
@@ -54,6 +55,9 @@ def save_offline(values):
     if not isinstance(values, dict):
         raise ValueError('Settings must be an object')
     settings = load_settings()
+    from core import valid_text_color
+    if 'text_color' in values and not valid_text_color(values['text_color']):
+        raise ValueError('Caption text colour must be a preset name or #rrggbb')
     for key, value in values.items():
         if key in DEFAULTS and key not in ('width', 'height'):
             settings[key] = type(DEFAULTS[key])(value)
@@ -107,7 +111,7 @@ COMMANDS = {
     'follow': 'Follow new captions: on, off or toggle (default)',
     'target': 'Translate into LANGUAGE, e.g. target German',
     'input': 'Capture "Audio output" or "Microphone"',
-    'text-color': 'Caption text: white, black, theme, or toggle (black ↔ white)',
+    'text-color': 'Caption text colour: auto (default), a preset (theme, white, yellow, cyan, green, orange, pink, blue, black), #rrggbb, next, or toggle (black ↔ white)',
     'font': 'Caption text size: bigger, smaller (steps of 4) or a size from 12 to 64',
     'download': 'Download the selected Whisper model',
     'cancel-download': 'Cancel the Whisper download',
@@ -158,12 +162,13 @@ def command(argv):
             value = 'off' if current else 'on'
         return change_setting('auto_scroll', value == 'on')
     if name == 'text-color':
-        if value not in ('', 'toggle', 'white', 'black', 'theme'):
-            raise ValueError('text-color takes white, black, theme or toggle')
-        if value in ('', 'toggle'):
-            current = send(dict(action='state')).get('settings', {}).get('text_color', 'theme')
-            value = 'white' if current == 'black' else 'black'
-        return change_setting('text_color', value)
+        from core import TEXT_COLORS, next_text_color, valid_text_color
+        if value in ('', 'toggle', 'next'):
+            current = send(dict(action='state')).get('settings', {}).get('text_color', 'auto')
+            value = next_text_color(current) if value == 'next' else ('white' if current == 'black' else 'black')
+        elif not valid_text_color(value.lower() if value.startswith('#') else value):
+            raise ValueError('text-color takes ' + ', '.join(TEXT_COLORS) + ', #rrggbb, next or toggle')
+        return change_setting('text_color', value.lower() if value.startswith('#') else value)
     if name == 'font':
         if value in ('bigger', 'smaller'):
             current = int(send(dict(action='state')).get('settings', {}).get('font_size', 24))

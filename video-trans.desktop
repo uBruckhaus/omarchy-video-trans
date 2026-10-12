@@ -6,7 +6,7 @@ Exec=video-trans settings
 Icon=media-view-subtitles-symbolic
 Terminal=false
 Categories=AudioVideo;Video;Accessibility;
-Actions=ToggleCaptions;StartCaptions;StopCaptions;ShowCaptions;ClearCaptions;FollowCaptions;CaptionTextColor;CaptionTextLarger;CaptionTextSmaller;UseAudioOutput;UseMicrophone;DownloadWhisper;SuggestModel;RefreshModels;
+Actions=ToggleCaptions;StartCaptions;StopCaptions;ShowCaptions;ClearCaptions;FollowCaptions;CaptionTextColor;CaptionTextNextColor;CaptionTextLarger;CaptionTextSmaller;UseAudioOutput;UseMicrophone;DownloadWhisper;SuggestModel;RefreshModels;
 X-Video-Trans-Managed=true
 
 [Desktop Action ToggleCaptions]
@@ -36,6 +36,10 @@ Exec=video-trans follow
 [Desktop Action CaptionTextColor]
 Name=Switch caption text black / white
 Exec=video-trans text-color toggle
+
+[Desktop Action CaptionTextNextColor]
+Name=Next caption text colour
+Exec=video-trans text-color next
 
 [Desktop Action CaptionTextLarger]
 Name=Larger caption text
