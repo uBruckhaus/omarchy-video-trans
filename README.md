@@ -56,7 +56,7 @@ Audio is processed in overlapping 5-second chunks by default. Larger chunks impr
 
 Setup adds the `video-trans` command and a **Video Trans** application entry whose
 desktop actions are **Start / stop captions**, **Start captions**, **Stop captions**,
-**Show captions**, **Clear captions**, **Follow new captions on / off**, **Capture audio
+**Show captions**, **Clear captions**, **Follow new captions on / off**, **Switch caption text black / white**, **Larger caption text**, **Smaller caption text**, **Capture audio
 output**, **Capture microphone**, **Download Whisper model**, **Auto-select local model**
 and **Refresh models**. In Launch & Bind, open **Apps → Video Trans → Shortcuts**, choose
 the action and assign your key. The default application action opens the bar popup.
@@ -68,6 +68,8 @@ The same actions work from a terminal:
 ```bash
 video-trans toggle | start | stop | show | clear
 video-trans follow [on|off|toggle]
+video-trans font bigger|smaller|<12-64>     # caption text size
+video-trans text-color white|black|theme|toggle
 video-trans target French          # one of the popup's target languages
 video-trans input Microphone       # or "Audio output"
 video-trans download | cancel-download | models | suggest

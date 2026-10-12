@@ -36,7 +36,7 @@ class TrayTests(unittest.TestCase):
     def test_menu_offers_every_action_with_fixed_labels(self):
         labels = self.labels(self.tray.menu)
         for label in ('Start / stop captions', 'Start captions', 'Stop captions', 'Show captions', 'Clear captions',
-                      'Follow new captions', 'Caption text', 'Translate to', 'Audio input', 'Download Whisper model',
+                      'Follow new captions', 'Caption text', 'Larger caption text', 'Smaller caption text', 'Translate to', 'Audio input', 'Download Whisper model',
                       'Auto-select local model', 'Refresh models', 'Settings…'):
             self.assertIn(label, labels)
         self.tray.state = dict(running=True, settings=DEFAULTS, status='Listening')
@@ -54,6 +54,13 @@ class TrayTests(unittest.TestCase):
         run.assert_any_call('input', 'Microphone')
         run.assert_any_call('start')
         run.assert_any_call('follow', 'on')
+
+    def test_font_entries(self):
+        with patch.object(self.tray, 'run') as run:
+            for label in ('Larger caption text', 'Smaller caption text'):
+                next(a for a in self.tray.menu.actions() if a.text() == label).trigger()
+        run.assert_any_call('font', 'bigger')
+        run.assert_any_call('font', 'smaller')
 
     def test_caption_text_submenu(self):
         with patch.object(self.tray, 'run') as run:

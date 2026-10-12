@@ -402,7 +402,7 @@ Ui.Panel {
               },
               {
                 "title": "6. Shortcuts",
-                "body": "• Launch & Bind → Apps → Video Trans → Shortcuts binds Start / stop, Start, Stop, Show, Clear, Follow, input and model actions.\n• The Video Trans tray menu (Launch & Bind → Plugins → Running in the bar) offers the same entries plus target language and input.\n• Terminal: video-trans toggle | start | stop | show | clear | target French | status. video-trans help lists all."
+                "body": "• Launch & Bind → Apps → Video Trans → Shortcuts binds Start / stop, Start, Stop, Show, Clear, Follow, caption text colour, larger / smaller text, input and model actions.\n• The Video Trans tray menu (Launch & Bind → Plugins → Running in the bar) offers the same entries plus target language and input.\n• Terminal: video-trans toggle | start | stop | show | clear | target French | status. video-trans help lists all."
               },
               {
                 "title": "7. Troubleshooting & Privacy",

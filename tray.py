@@ -61,6 +61,8 @@ class Tray(QSystemTrayIcon):
         self.follow_action.setCheckable(True)
         self.follow_action.triggered.connect(lambda checked: self.run('follow', 'on' if checked else 'off'))
         self.color_actions = self.choices('Caption text', ['Omarchy theme', 'White', 'Black'], 'text-color')
+        menu.addAction('Larger caption text', lambda: self.run('font', 'bigger'))
+        menu.addAction('Smaller caption text', lambda: self.run('font', 'smaller'))
         menu.addSeparator()
         self.target_actions = self.choices('Translate to', LANGUAGES, 'target')
         self.input_actions = self.choices('Audio input', INPUTS, 'input')

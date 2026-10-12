@@ -108,6 +108,7 @@ COMMANDS = {
     'target': 'Translate into LANGUAGE, e.g. target German',
     'input': 'Capture "Audio output" or "Microphone"',
     'text-color': 'Caption text: white, black, theme, or toggle (black ↔ white)',
+    'font': 'Caption text size: bigger, smaller (steps of 4) or a size from 12 to 64',
     'download': 'Download the selected Whisper model',
     'cancel-download': 'Cancel the Whisper download',
     'models': 'Start the provider and refresh its models',
@@ -117,6 +118,7 @@ COMMANDS = {
     'status': 'Print the current state as JSON',
 }
 INPUTS = ('Audio output', 'Microphone')
+FONT_SIZES, FONT_STEP = (12, 64), 4  # the popup's caption font size range
 
 
 def usage():
@@ -162,6 +164,15 @@ def command(argv):
             current = send(dict(action='state')).get('settings', {}).get('text_color', 'theme')
             value = 'white' if current == 'black' else 'black'
         return change_setting('text_color', value)
+    if name == 'font':
+        if value in ('bigger', 'smaller'):
+            current = int(send(dict(action='state')).get('settings', {}).get('font_size', 24))
+            size = current + (FONT_STEP if value == 'bigger' else -FONT_STEP)
+        elif value.isdigit():
+            size = int(value)
+        else:
+            raise ValueError('font takes bigger, smaller or a size from 12 to 64')
+        return change_setting('font_size', max(FONT_SIZES[0], min(FONT_SIZES[1], size)))
     if name == 'target':
         from core import LANGUAGES
         match = next((item for item in LANGUAGES if item.casefold() == value.strip().casefold()), None)

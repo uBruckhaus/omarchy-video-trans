@@ -57,6 +57,24 @@ class CommandTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bridge.command(['text-color', 'red'])
 
+    def test_font_steps_and_clamps(self):
+        for current, word, expected in ((24, 'bigger', 28), (24, 'smaller', 20), (62, 'bigger', 64), (14, 'smaller', 12)):
+            with patch.object(bridge, 'send', return_value=dict(settings=dict(font_size=current))), \
+                 patch.object(bridge, 'change_setting', return_value={}) as change:
+                bridge.command(['font', word])
+            change.assert_called_once_with('font_size', expected)
+        with patch.object(bridge, 'change_setting', return_value={}) as change:
+            bridge.command(['font', '99'])
+        change.assert_called_once_with('font_size', 64)
+        for bad in ('huge', '-4', '1e3', ''):
+            with self.assertRaises(ValueError):
+                bridge.command(['font', bad] if bad else ['font'])
+
+    def test_font_saved_without_running_controller(self):
+        with patch.object(bridge, 'request', side_effect=FileNotFoundError):
+            bridge.command(['font', 'bigger'])
+        self.assertEqual(core.load_settings()['font_size'], core.DEFAULTS['font_size'] + 4)
+
     def test_follow_toggles_current_value(self):
         with patch.object(bridge, 'send', return_value=dict(settings=dict(auto_scroll=True))), \
              patch.object(bridge, 'change_setting', return_value={}) as change:

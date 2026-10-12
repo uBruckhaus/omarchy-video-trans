@@ -48,7 +48,7 @@ Change the target language in **Translation → Translate into** and the input i
 | Mouse wheel | Read earlier captions |
 | Follow new captions | Automatically scroll to newly received captions |
 | Caption duration | Keep each caption visible for 1–120 seconds; default 5 |
-| Caption font size | Change readability (12–64), including during translation |
+| Caption font size | Change readability (12–64), including during translation; also `video-trans font bigger` / `smaller` or the Larger / Smaller caption text shortcuts |
 | Caption text | Omarchy theme, white, or black for bright video; also `video-trans text-color toggle` |
 | Show captions | Open the caption window without starting capture |
 | Clear captions | Remove the retained text |
@@ -113,7 +113,7 @@ Custom `XDG_CONFIG_HOME` and `XDG_DATA_HOME` change the first two locations. Do 
 
 ## Shortcuts and actions
 
-Setup adds a **Video Trans** application entry with desktop actions for every popup control: start / stop, start, stop, show, clear, follow new captions, audio output or microphone input, Whisper download, auto-select local model and refresh models. If Launch & Bind does not list them, press **Add shortcut actions** in the popup's **Captions** group. In Launch & Bind, open **Apps → Video Trans → Shortcuts**, choose an action and assign a key. Installation does not assign a key automatically.
+Setup adds a **Video Trans** application entry with desktop actions for every popup control: start / stop, start, stop, show, clear, follow new captions, caption text black / white, larger / smaller caption text, audio output or microphone input, Whisper download, auto-select local model and refresh models. If Launch & Bind does not list them, press **Add shortcut actions** in the popup's **Captions** group. In Launch & Bind, open **Apps → Video Trans → Shortcuts**, choose an action and assign a key. Installation does not assign a key automatically.
 
 The same actions run from a terminal as `video-trans <action>`; `video-trans help` lists them. Its tray menu offers them too, plus target language and audio input submenus; Launch & Bind lists it under **Plugins → Running in the bar**, like Screen Narrator. The tray is always there while the bar widget is, and its entries start Video Trans when needed.
 
