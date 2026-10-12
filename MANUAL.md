@@ -8,15 +8,13 @@ Video Trans recognizes speech locally with Whisper, translates it with your chos
 
 ## Install
 
-Use an Omarchy version with shell plugin support, running PipeWire-Pulse. In a terminal:
+Use an Omarchy version with shell plugin support, running PipeWire-Pulse. Add the plugin:
 
 ```bash
-omarchy pkg add ffmpeg libpulse uv
 omarchy plugin add https://github.com/uBruckhaus/omarchy-video-trans.git --enable
-bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh
 ```
 
-The plugin command adds the bar widget. **Setup is a separate required step:** Omarchy does not run setup scripts automatically. Setup creates an isolated Python 3.12 environment with pinned PySide6, faster-whisper and httpx dependencies. It does not install a translator, change your keybindings, or replace your settings. Internet access is needed for setup and uncached speech models.
+Then click the Video Trans bar icon and press **Set up now** in the **Not ready yet** card. It installs missing system packages after a password prompt, an isolated Python 3.12 environment with pinned PySide6, faster-whisper and httpx, and the `video-trans` command with desktop actions for shortcuts. It does not install a translator, assign keys or replace your settings. Internet access is needed for setup and uncached speech models. Terminal alternative: `omarchy pkg add ffmpeg libpulse uv`, then `bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh`.
 
 Choose one translation backend before starting:
 
@@ -30,34 +28,35 @@ Whisper is the speech recognizer, not the translation provider. Video Trans does
 
 ## Your first session
 
-1. Start playback, then click the Video Trans bar icon.
-2. Choose **Audio output** and the device playing your video. This captures all applications using that output. For microphone speech, explicitly select **Microphone** and its device instead.
-3. Leave the source language on **auto**, choose your target language and a multilingual Whisper model. Smaller models need fewer resources; larger models can take longer. CPU/int8 recognition keeps GPU memory available for translation.
-4. Optionally click **Download selected Whisper model** before the session. It only downloads speech recognition data. You can cancel it. Otherwise the first Start downloads the model when necessary.
-5. Choose llama.cpp, Ollama or Online. Use **Refresh models** and select an installed text model. **Auto-select local** suggests a model for the target language; review the suggestion. From Online it may switch to a detected local backend. It does not download or benchmark translation models.
-6. For Online, expand **Provider and recognition settings**, enter your endpoint and model, enter your token, and click **Apply token**. Enable **Save token locally** only if you want it retained between sessions.
-7. Click **Start**. Check the startup indicators for audio, recognition and translation readiness. Gray means pending, green means ready, and red explains a blocking problem. Captions appear once speech is recognized and translated.
+1. Click the Video Trans bar icon. While something is missing, the **Not ready yet** card names the next step, for example *step 1 of 3*, with one button that does it. **Other options** lists alternatives.
+2. **Set up now** — once, as described under Install.
+3. **Use <device>** — the playback device carrying your video; the default output comes first. Choose **Capture microphone instead** for speech in the room.
+4. **Download Whisper …** — the speech model, once. Smaller models need fewer resources; larger ones are more accurate. Recognition runs on the CPU, keeping GPU memory for translation.
+5. Translator — llama.cpp or Ollama start automatically when installed. If neither is, the card offers **Connect an online provider…**: enter the server address, model ID and API key on the provider page (paste with Ctrl+V), then **Apply token**. **Save token on this device** is optional.
+6. **Choose a model automatically** — an installed text model suited to the target language. Review it in **Translation**; it is a name-based suggestion, not a benchmark.
+7. When **✓ Ready** appears, start playback and press **▶ Start**. The bar icon turns green while captions run; right-click it to start or stop directly. If something fails at start, the startup check shows ✓ / ✕ per requirement with an explanation.
 
-Closing the popup leaves translation running when the caption window is visible. **Stop** and **Close overlay** stop capture and release owned resources. Changing the input or speech model is easiest after stopping the session.
+Change the target language in **Translation → Translate into** and the input in **Listening** before starting. Closing the popup leaves translation running when the caption window is visible. **■ Stop** and **Close caption window** stop capture and release owned resources.
 
 ## Caption controls
 
 | Control | Effect |
 | --- | --- |
 | Drag with the left mouse button | Move the caption window |
-| Drag the bottom-right handle | Resize the caption window |
+| Drag the bottom-right handle | Resize the caption window (the handle shows while the pointer is over the captions) |
 | Shift + drag | Select caption text |
 | Mouse wheel | Read earlier captions |
 | Follow new captions | Automatically scroll to newly received captions |
 | Caption duration | Keep each caption visible for 1–120 seconds; default 5 |
-| Caption font size | Change readability, including during translation |
+| Caption font size | Change readability (12–64), including during translation |
+| Caption text | Omarchy theme, white, or black for bright video; also `video-trans text-color toggle` |
 | Show captions | Open the caption window without starting capture |
 | Clear captions | Remove the retained text |
-| Stop / Close overlay | Close the caption window and end the session |
+| ■ Stop / Close caption window | Close the caption window and end the session |
 
 The caption overlay remains above fullscreen video on Wayland and belongs to the workspace where it opened. Switching workspaces hides it while capture continues; returning shows it again. No window rule is required.
 
-Expand **Caption overlay appearance** for background transparency, border thickness and retained history. These settings affect the captions only. Colors follow the current Omarchy theme. Background transparency does not fade the text. The default background is transparent and the 1 px border appears on focus; a value of −1 uses the theme's popup defaults.
+In **Captions**, expand **Caption window appearance** for background transparency, border thickness and retained history. These settings affect the captions only. Colors follow the current Omarchy theme. Background transparency does not fade the text. The default background is transparent and the 1 px border appears on focus; a value of −1 uses the theme's popup defaults.
 
 Recognition uses overlapping audio chunks, five seconds by default. Longer chunks add sentence context and latency. Captions do not delay or synchronize video playback. If processing falls behind, the bounded queue drops old audio and reports it. Noise suppression and voice detection reduce unwanted captions but cannot isolate one speaker from all music or background voices.
 
@@ -108,11 +107,16 @@ Omarchy removes the plugin and its bar integration. Personal data and downloaded
 | `~/.config/video-trans/` | Preferences and optional saved credentials |
 | `~/.local/share/video-trans/` | Isolated Python runtime |
 | `~/.cache/huggingface/hub/` | Shared model cache; other applications may use it |
+| `~/.local/bin/video-trans`, `~/.local/share/applications/video-trans.desktop` | Command and desktop actions for shortcuts |
 
 Custom `XDG_CONFIG_HOME` and `XDG_DATA_HOME` change the first two locations. Do not delete the entire shared Hugging Face cache just to remove this plugin. Remove any optional Video Trans shortcut you added yourself.
 
-## Optional keyboard shortcut
+## Shortcuts and actions
 
-The [README](README.md#development-and-checks) includes a Hyprland Lua binding for Super + Ctrl + V. That example replaces Omarchy's Clipboard manager shortcut; add it only if you want that change. It toggles captions and capture together. Installation does not add a shortcut automatically.
+Setup adds a **Video Trans** application entry with desktop actions for every popup control: start / stop, start, stop, show, clear, follow new captions, audio output or microphone input, Whisper download, auto-select local model and refresh models. If Launch & Bind does not list them, press **Add shortcut actions** in the popup's **Captions** group. In Launch & Bind, open **Apps → Video Trans → Shortcuts**, choose an action and assign a key. Installation does not assign a key automatically.
+
+The same actions run from a terminal as `video-trans <action>`; `video-trans help` lists them. Its tray menu offers them too, plus target language and audio input submenus; Launch & Bind lists it under **Plugins → Running in the bar**, like Screen Narrator. The tray is always there while the bar widget is, and its entries start Video Trans when needed.
+
+The [README](README.md#development-and-checks) also shows a direct Hyprland Lua binding for Super + Ctrl + V. That example replaces Omarchy's Clipboard manager shortcut; add it only if you want that change.
 
 Video Trans is an independent community plugin, licensed under [MIT](LICENSE).

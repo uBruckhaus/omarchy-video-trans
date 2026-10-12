@@ -14,11 +14,21 @@ CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'vid
 DEFAULTS = dict(provider='llama.cpp', endpoint='http://127.0.0.1:8080', model='',
                 speech_provider='Whisper (local)', audio_input='Audio output',
                 target='German', source='auto', speech_model='small', chunk_seconds=5,
-                noise_filter=True, font_size=24, caption_seconds=5, background_transparency=100, border_width=1, history_lines=500,
+                noise_filter=True, font_size=24, caption_seconds=5, background_transparency=100, border_width=1, history_lines=500, text_color='theme',
                 output='', auto_scroll=True)
 LANGUAGES = ['German', 'English', 'French', 'Spanish', 'Italian', 'Portuguese',
              'Dutch', 'Polish', 'Ukrainian', 'Russian', 'Japanese', 'Chinese',
              'Korean', 'Arabic', 'Hindi', 'Turkish', 'Indonesian', 'Vietnamese']
+
+
+# Caption text colour: the theme's, or white / black for very dark or very bright video.
+# The caption background takes the opposite colour so the text stands out at any transparency.
+TEXT_COLORS = {'white': ('#ffffff', '#000000'), 'black': ('#000000', '#ffffff')}
+
+
+def caption_colors(theme, choice):
+    """(text, background) for the caption window."""
+    return TEXT_COLORS.get(choice, (theme['foreground'], theme['background']))
 
 
 def read_theme():

@@ -10,9 +10,11 @@
 
 **Tags:** ai, media, bar
 
-**Screenshot:** `preview.png` (synthetic captions)
+**Screenshot:** `preview.png` (real 0.4.0 screenshots: synthesized narration over a generated test video)
 
-Live translated captions from audio output or an explicitly selected microphone. A native Omarchy panel controls translation; the independent caption overlay is resizable and floating above fullscreen video, restricted to its starting workspace. Local Whisper automatically detects speech language and filters non-speech. Choose llama.cpp, Ollama or an OpenAI-compatible online translator and model, with an automatic local-model suggestion based on your target language. Overlay-only transparency and border controls, adjustable caption duration and scrollback and cleanup on Stop/Close. German target by default. Startup checks display green/red checkmarks for speech recognition, audio capture, translator and model availability.
+Live translated captions over any video, call or microphone: local Whisper, llama.cpp, Ollama or online translation. Guided setup, shortcut actions, black or white text.
+
+Speech is recognized locally by Whisper and translated by llama.cpp, Ollama or an OpenAI-compatible online API. Captions float above fullscreen video in a movable, resizable window with white or black text, adjustable size and duration. A guided popup names the one next setup step and fixes it with one click. Every action (start, stop, show, clear, text colour, target language, input) is a `video-trans` command, a desktop action and a tray entry, so Launch & Bind can put it on a key. The bar icon turns the theme's green while captions run.
 
 ## Capabilities
 
@@ -21,7 +23,10 @@ Live translated captions from audio output or an explicitly selected microphone.
 - Sends recognized text to the chosen local or remote translation endpoint; audio is never uploaded.
 - Starts/stops owned llama.cpp/Ollama user services or an owned Ollama child process; unloads newly used models.
 - Stores preferences and optional owner-only plaintext bearer credentials in the user's XDG config directory.
-- Downloads Python dependencies only via explicit setup; Whisper downloads the selected model on first Start. No telemetry, recorded audio or disk transcript history.
+- Downloads Python dependencies only via explicit setup (popup **Set up now** or `setup.sh`); Whisper downloads the selected model on request or first Start. No telemetry, recorded audio or disk transcript history.
+- Guided setup installs missing system packages (`ffmpeg`, `libpulse`, `quickshell`, `uv`) through the system's graphical authentication prompt, only after the user presses **Set up now**.
+- Adds a managed `~/.local/bin/video-trans` command and `~/.local/share/applications/video-trans.desktop` (desktop actions for shortcuts) from setup or the **Add shortcut actions** button; files it did not create are never replaced.
+- Runs a small tray process (`tray.py`) while the bar widget is loaded; its entries run `video-trans <action>`.
 
 ## Dependencies
 

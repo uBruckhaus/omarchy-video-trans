@@ -2,9 +2,9 @@
 
 Live translated captions for Omarchy, from **audio output or an explicitly selected microphone**. Click the bar icon to open a native Omarchy popup using the standard shell controls and layout. Translated text appears in an **independent, resizable floating caption window**. Whisper is the first speech-provider choice; llama.cpp, Ollama or an OpenAI-compatible online API translates the recognized text. German is the default target.
 
-![Video Trans caption window](preview.png)
+![Video Trans: captions over video, the bar popup and its Launch & Bind actions](preview.png)
 
-The preview uses synthetic example captions, not a recording.
+The preview shows real captions from version 0.4.0: an English narration synthesized locally (Kokoro) over a generated test video, translated to German by Whisper and a local llama.cpp model.
 
 **[User manual](MANUAL.md)** · **[Marketplace description](MARKETPLACE.md)** · **[MIT license](LICENSE)**
 
@@ -14,7 +14,7 @@ The preview uses synthetic example captions, not a recording.
 - Choose **Audio output** or **Microphone**. Output mode only enumerates sink monitors; microphone mode only enumerates non-monitor sources. No microphone or output fallback.
 - FFmpeg speech-band filtering and optional adaptive FFT noise suppression, followed by Silero voice activity detection and Whisper confidence checks. These reduce false captions; they cannot completely separate speech from music or other voices.
 - Separate speech-model and translation-model selectors. Whisper runs on CPU with int8, leaving GPU memory for your translator.
-- Local llama.cpp router and Ollama support automatic service startup, model discovery and model cleanup. **Auto-select local model** considers the target language, multilingual model family and model size, excluding speech-synthesis, embedding and coding-only models. This is an editable heuristic suggestion, not a quality benchmark.
+- Local llama.cpp router and Ollama support automatic service startup, model discovery and model cleanup. **Choose automatically** (in Translation) considers the target language, multilingual model family and model size, excluding speech-synthesis, embedding and coding-only models. This is an editable heuristic suggestion, not a quality benchmark.
 - Online endpoint, model and masked API-key / bearer-token configuration. Compatible with the `/v1/models` and `/v1/chat/completions` protocols, rather than every provider's proprietary API.
 - A native Omarchy popup for settings and translation controls, independent of the caption window. Its popup uses a local snapshot of the original Omarchy controls, with fixed typography and spacing across themes, with the native shell palette and borders.
 - A resizable floating caption window with adjustable font size, background transparency and border thickness. These appearance controls affect **only the overlay**, never the native widget/panel. Overlay background, text and border colors follow the active Omarchy theme; The background is fully transparent with a 1 px border by default. The border appears when the overlay opens or gains focus, and becomes invisible on focus loss without shifting the captions; both can be adjusted, and −1 uses the theme's popup settings. Text stays opaque as background transparency changes. Theme changes are picked up while the window is open. Each caption stays visible for 5 seconds by default, then expires independently. Adjust **Caption duration (seconds)** from 1 to 120 seconds and **Caption font size** in the main plugin controls, including while translating. The overlay can shrink to approximately three lines at the selected font size. Disable **Follow new captions** in the plugin panel to read older captions without being scrolled away.
@@ -22,29 +22,63 @@ The preview uses synthetic example captions, not a recording.
 
 ## Install
 
-Requires current Omarchy shell plugin support, PipeWire-Pulse, FFmpeg and `uv`:
-
 ```bash
-omarchy pkg add ffmpeg libpulse uv
 omarchy plugin add https://github.com/uBruckhaus/omarchy-video-trans.git --enable
-bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh
 ```
 
-Omarchy does not execute plugin setup hooks. Run setup explicitly; it downloads an isolated Python 3.12 runtime and pinned dependencies under `~/.local/share/video-trans/runtime`. Select **Whisper model** in the main panel: Tiny, Base, Small, Medium, Large (v3), or Turbo. Click **Download selected Whisper model** to cache it before translation; **Cancel Whisper download** cancels the operation. Downloads never start audio capture or a translation provider. First **Start** also downloads the selected model if needed. Downloads can be cancelled by Stop or Close. A filesystem path to an existing faster-whisper / CTranslate2 model can also be entered in the Whisper-model field. Models such as `tiny.en` are English-only; choose a multilingual model for automatic language detection.
+Then click the **Video Trans** bar icon. The popup shows a **Not ready yet** card that names the one next step and a button that does it:
 
-On Omarchy/Wayland the independent caption surface uses Quickshell's **overlay layer**, so it remains above fullscreen video. It belongs to the workspace where it opens: switching workspaces hides it, returning shows the same captions, and capture continues in the background. No Hyprland window rule is required. Drag anywhere inside it with the plain left mouse button to move it (Shift + drag selects text) and its bottom-right handle to resize it. Scroll the mouse wheel to read earlier captions. Stop and Close overlay in the plugin panel close it and release owned resources.
+1. **Set up now** installs missing system packages (`ffmpeg`, `libpulse`, `quickshell`, `uv`; you confirm a password prompt) and an isolated Python 3.12 runtime with pinned dependencies under `~/.local/share/video-trans/runtime`, plus the `video-trans` command and desktop actions.
+2. **Use <device>** chooses the playback device to caption (the default output is offered first; **Other options** has the others and the microphone).
+3. **Download Whisper …** caches the selected speech model once.
+4. If no local translator is found, the card offers the installed alternative (llama.cpp or Ollama) or **Connect an online provider…**.
+5. **Choose a model automatically** picks an installed translation model for the target language.
+
+When every step is done the card disappears and **✓ Ready** appears. Setup from a terminal works too: `bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh` (packages installed beforehand with `omarchy pkg add ffmpeg libpulse uv`). Setup never starts capture or a translation provider.
+
+The Whisper model (Tiny, Base, Small, Medium, Large v3 or Turbo) is chosen in **Listening**. First **Start** also downloads it if needed; Stop or Close cancels a download. A filesystem path to an existing faster-whisper / CTranslate2 model also works. Models such as `tiny.en` are English-only; choose a multilingual model for automatic language detection.
+
+On Omarchy/Wayland the independent caption surface uses Quickshell's **overlay layer**, so it remains above fullscreen video. It belongs to the workspace where it opens: switching workspaces hides it, returning shows the same captions, and capture continues in the background. No Hyprland window rule is required. Drag anywhere inside it with the plain left mouse button to move it (Shift + drag selects text) and its bottom-right handle to resize it; the handle and border appear only while the pointer is over the captions. Scroll the mouse wheel to read earlier captions. ■ Stop and Close caption window in the popup close it and release owned resources.
 
 ## Use
 
-1. Click **Video Trans** in the bar to open its standard Omarchy popup.
-2. Whisper appears first as the speech provider. Choose the audio input type and device. For videos use **Audio output** and select the device carrying playback. This captures all applications playing through that output; close or mute unrelated audio.
-3. Keep source language **auto**, select a target language and a multilingual Whisper model.
-4. Select your translation provider and click **Start provider / refresh models**. Choose a text model, or click **Auto-select local model for target language**. When Online is selected, Auto-select detects an installed llama.cpp or Ollama, switches to it and suggests an available model. It does not download new translation models or load one for a benchmark. Synthesis/tokenizer models are excluded. A small instruction model is usually more responsive than a large reasoning model.
-5. Click **Start** to open the separate caption window and begin translation. The panel displays a startup checklist with green or red checkmarks for target language, audio capture, Whisper, provider access and the selected translation model. A gray ellipsis means a check or model load is still in progress. Missing requirements block startup with an explanation. The empty overlay shows live loading/listening status until the first caption; the panel distinguishes startup from active capture. If no audio reaches the selected device, its status tells you to select the output used by your video. **Show captions** opens it without starting capture. Closing the popup leaves a visible overlay and translation running. Resize/move the overlay independently, and disable **Follow new captions** in the panel to read at your own pace. Stop closes the overlay; **Clear captions** in the panel removes its text. Closing the overlay stops capture, releases owned models/services and exits its process.
+The popup follows Screen Narrator's layout: a summary of the active setup, **▶ Start**, **■ Stop** and **Captions** buttons, the next-step card while something is missing, and three collapsible groups:
 
-Expand **Provider and recognition settings** for endpoints, authentication and advanced speech options. Expand **Caption overlay appearance** for transparency, border and reading controls; `−1` uses the current Omarchy theme default. Hiding the popup when no overlay is open releases the idle controller and any service it started for model discovery.
+- **Listening** — capture **Audio output** (what you hear: video, calls) or **Microphone**, the device, and the Whisper model with its download. **Recognition options** holds the spoken-language override, noise suppression and chunk length. Audio output captures every application playing through that device; mute unrelated audio.
+- **Translation** — target language, translator (llama.cpp, Ollama or Online) and model. **Choose automatically** considers the target language, multilingual model family and model size, excluding speech-synthesis, embedding and coding-only models; it is a heuristic, not a benchmark, and never downloads models. **Provider settings…** opens a subpage for the server address, model ID and API key (paste with Ctrl+V; Backspace returns).
+- **Captions** — clear or close the caption window, follow new captions, **Caption text** (Omarchy theme, white, or black for bright video; the backdrop takes the opposite colour), display duration, font size (12–64) and **Caption window appearance** (transparency, border, history; `−1` uses the Omarchy theme default).
+
+**▶ Start** opens the caption window and begins translation; if a requirement fails, a startup check lists target language, audio capture, Whisper, provider and model with ✓ / ✕. **Captions** opens the window without capturing. The bar icon turns the theme's green while captions run; right-click it to start or stop without opening the popup. Closing the popup leaves captions running; **■ Stop** closes the window, releases owned models and services and exits the controller. Settings save immediately, also while Video Trans is off.
 
 Audio is processed in overlapping 5-second chunks by default. Larger chunks improve sentence context but increase latency. If inference cannot keep up, a bounded audio queue drops older chunks and reports this in the status line. Text is not synchronized to a delayed video. Source-language detection can be uncertain for short/noisy speech; select a source-language override when needed.
+
+## Shortcuts and actions
+
+Setup adds the `video-trans` command and a **Video Trans** application entry whose
+desktop actions are **Start / stop captions**, **Start captions**, **Stop captions**,
+**Show captions**, **Clear captions**, **Follow new captions on / off**, **Capture audio
+output**, **Capture microphone**, **Download Whisper model**, **Auto-select local model**
+and **Refresh models**. In Launch & Bind, open **Apps → Video Trans → Shortcuts**, choose
+the action and assign your key. The default application action opens the bar popup.
+If you set Video Trans up before these actions existed, press **Add shortcut actions** in the popup's **Captions** group (or run `bash install-shortcuts.sh` in the plugin folder). Setup does not assign a key automatically, and it leaves an existing `video-trans`
+command or desktop entry that it did not create untouched.
+
+The same actions work from a terminal:
+
+```bash
+video-trans toggle | start | stop | show | clear
+video-trans follow [on|off|toggle]
+video-trans target French          # one of the popup's target languages
+video-trans input Microphone       # or "Audio output"
+video-trans download | cancel-download | models | suggest
+video-trans settings               # open the bar popup
+video-trans status                 # current state as JSON
+```
+
+`stop`, `clear` and `status` never start Video Trans. Target language and input
+changes are saved directly while it is off, and refused while captions are running.
+
+Video Trans also shows a tray icon whenever its bar widget is loaded, like Screen Narrator. Launch & Bind lists it under **Plugins → Running in the bar**; its menu has these entries plus **Translate to** and **Audio input** submenus and **Settings…**, and each entry can be clicked or bound with **Shortcut…**. The icon fills with the theme's green while captions run. The tray is a small separate process (`tray.py`, started by the bar widget); its entries run `video-trans <action>`, so the caption controller and models still load only when needed. Entry labels stay fixed in every state so saved shortcuts keep working.
 
 ## Providers and authentication
 
@@ -101,7 +135,7 @@ Rerun setup after updates to synchronize the isolated runtime with the pinned de
 omarchy plugin remove ubruckhaus.video-trans
 ```
 
-Removal deletes the plugin checkout and bar integration. It retains preferences, saved credentials, the isolated runtime and cached Whisper models. See the [manual](MANUAL.md#remove-and-clean-up) for optional cleanup. Setup never edits Hyprland bindings or replaces user configuration.
+Removal deletes the plugin checkout and bar integration. It retains preferences, saved credentials, the isolated runtime and cached Whisper models. See the [manual](MANUAL.md#remove-and-clean-up) for optional cleanup. Removal leaves the `video-trans` command and desktop entry; delete `~/.local/bin/video-trans` and `~/.local/share/applications/video-trans.desktop` if you no longer want them. Setup never edits Hyprland bindings or replaces user configuration.
 
 ## Development and checks
 
@@ -109,7 +143,8 @@ Removal deletes the plugin checkout and bar integration. It retains preferences,
 bash setup.sh
 ~/.local/share/video-trans/runtime/bin/python -m unittest discover -s tests -v
 omarchy plugin validate .
-bash -n setup.sh launch.sh bridge.sh start.sh toggle.sh
+bash -n setup.sh launch.sh bridge.sh start.sh stop.sh toggle.sh
+python3 -m unittest tests.test_readiness tests.test_bridge   # also runs before setup, on the system Python
 ```
 
 Tests cover device-type isolation, capture filters, provider protocols, ownership cleanup, credential permissions, target-sensitive model suggestions, Omarchy theme defaults, appearance overrides, plain-text caption rendering, retained captions and asynchronous close. They do not require models, audio capture or paid API calls. A full local integration check also passed: playback through a temporary silent sink → noise filtering → Whisper English detection → Gemma German translation → worker/service cleanup. Whisper rejected a synthetic non-speech noise sample. Online and Ollama integration need their respective accounts/installations.

@@ -90,6 +90,9 @@ ShellRoot {
       border.width: root.view.border_width === undefined ? 1 : root.view.border_width
       border.color: Window.active || root.initialBorder ? theme.border_color : "transparent"
       Connections { target: surface.Window.window; function onActiveChanged() { root.initialBorder = false } }
+      // Shows the resize grip only while the pointer is over the captions (passive: moving,
+      // scrolling and selecting keep working).
+      HoverHandler { id: hover }
       // Changing focus only changes border color, preserving caption geometry.
       Flickable {
         id: scroll
@@ -144,6 +147,9 @@ ShellRoot {
         id: resizeHandle
         anchors { bottom: parent.bottom; right: parent.right; margins: 4 }
         width: 28; height: 28
+        // Hidden over the video until the pointer is on the caption window; stays during a resize.
+        opacity: hover.hovered || resizeArea.pressed ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 150 } }
         onPaint: {
           var context = getContext("2d")
           context.clearRect(0, 0, width, height)
@@ -153,6 +159,7 @@ ShellRoot {
         }
         Connections { target: surface; function onThemeChanged() { resizeHandle.requestPaint() } }
         MouseArea {
+          id: resizeArea
           anchors.fill: parent
           cursorShape: Qt.SizeFDiagCursor
           property point initial

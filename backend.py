@@ -95,7 +95,7 @@ class Backend:
         whisper_ok = all(importlib.util.find_spec(name) is not None for name in ('faster_whisper', 'numpy', 'av'))
         source_ok = not (settings['speech_model'].endswith('.en') and settings['source'] != 'en')
         if not whisper_ok or not source_ok:
-            detail = 'Run setup.sh to install Whisper.' if not whisper_ok else 'Choose a multilingual Whisper model for automatic language detection, or set the source to en.'
+            detail = 'Press Set up now in the Video Trans popup to install Whisper.' if not whisper_ok else 'Choose a multilingual Whisper model for automatic language detection, or set the source to en.'
             self.check('whisper', 'Whisper', 'error', detail)
             errors.append(detail)
         else:

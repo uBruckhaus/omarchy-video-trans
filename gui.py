@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QScrollArea,
     QPushButton, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from core import CONFIG, LANGUAGES, load_settings, save_json, read_theme
+from core import CONFIG, LANGUAGES, caption_colors, load_settings, save_json, read_theme
 
 
 class ResizeGrip(QWidget):
@@ -86,6 +86,10 @@ class Window(QMainWindow):
         clear = QPushButton('Clear')
         clear.clicked.connect(self.clear_captions)
         self.scroll = QCheckBox('Follow new text')
+        self.text_color = QComboBox()
+        for value, label in (('theme', 'Omarchy theme'), ('white', 'White'), ('black', 'Black')):
+            self.text_color.addItem(label, value)
+        self.text_color.setCurrentIndex(max(0, self.text_color.findData(self.settings.get('text_color', 'theme'))))
         self.scroll.setChecked(self.settings['auto_scroll'])
         for item in (self.start, self.stop, self.compact, clear, self.scroll):
             buttons.addWidget(item)
@@ -208,6 +212,7 @@ class Window(QMainWindow):
         self.font_size.valueChanged.connect(self.apply_appearance)
         self.transparency.valueChanged.connect(self.apply_appearance)
         self.border_width.valueChanged.connect(self.apply_appearance)
+        self.text_color.currentIndexChanged.connect(self.apply_appearance)
         self.apply_appearance()
         self.theme_timer = QTimer(self)
         self.theme_timer.timeout.connect(self.apply_appearance)
@@ -269,8 +274,9 @@ class Window(QMainWindow):
         theme = read_theme()
         transparency = self.transparency.value()
         width = self.border_width.value()
+        text, back = caption_colors(theme, self.text_color.currentData())
         return dict(open=self.layer_open, text=self.captions.toPlainText(), status=self.status.text(), caption_received=self.caption_received,
-                    theme=theme, font_size=self.font_size.value(), auto_scroll=self.scroll.isChecked(),
+                    theme=theme | dict(foreground=text, background=back), font_size=self.font_size.value(), auto_scroll=self.scroll.isChecked(),
                     background_transparency=theme['background_transparency'] if transparency < 0 else transparency,
                     border_width=theme['border_width'] if width < 0 else width,
                     width=self.width(), height=self.height())
@@ -290,8 +296,9 @@ class Window(QMainWindow):
         self.captions.setFont(QFont('sans-serif', self.font_size.value()))
         self.setMinimumHeight(QFontMetrics(self.captions.font()).lineSpacing() * 3 + 28)
         theme = read_theme()
-        background = QColor(theme['background'])
-        foreground = QColor(theme['foreground'])
+        text, back = caption_colors(theme, self.text_color.currentData())
+        background = QColor(back)
+        foreground = QColor(text)
         accent = QColor(theme['accent'])
         palette = self.palette()
         for role, color in ((QPalette.Window, background), (QPalette.Base, background), (QPalette.Button, background.lighter(140)),
@@ -338,7 +345,8 @@ class Window(QMainWindow):
                     chunk_seconds=self.chunk.value(), noise_filter=self.noise.isChecked(),
                     font_size=self.font_size.value(), caption_seconds=self.caption_seconds.value(), background_transparency=self.transparency.value(),
                     border_width=self.border_width.value(), history_lines=self.history.value(),
-                    output=self.output.currentData() or '', auto_scroll=self.scroll.isChecked())
+                    output=self.output.currentData() or '', auto_scroll=self.scroll.isChecked(),
+                    text_color=self.text_color.currentData())
 
     def save(self):
         self.settings = self.current_settings()
@@ -359,7 +367,7 @@ class Window(QMainWindow):
             self.buffer.clear()
             self.process.start(sys.executable, ['-u', str(Path(__file__).with_name('backend.py'))])
             if not self.process.waitForStarted(3000):
-                self.set_status('Worker failed to start. Run setup.sh.')
+                self.set_status('Worker failed to start. Press Set up now in the Video Trans popup.')
                 return False
         data = dict(action=action, settings=self.current_settings(), token=self.token.text())
         self.process.write((json.dumps(data) + '\n').encode())
@@ -372,7 +380,7 @@ class Window(QMainWindow):
             self.start.setEnabled(True)
             self.stop.setEnabled(False)
             self.settings_widget.setEnabled(True)
-            self.set_status('Worker failed to start. Run setup.sh.')
+            self.set_status('Worker failed to start. Press Set up now in the Video Trans popup.')
 
     def refresh_models(self):
         self.save()
@@ -549,7 +557,7 @@ class Window(QMainWindow):
             raise ValueError('Settings must be an object')
         if self.running or self.downloading:
             values = {key: value for key, value in values.items() if key in
-                      ('font_size', 'caption_seconds', 'background_transparency', 'border_width', 'history_lines', 'auto_scroll')}
+                      ('font_size', 'caption_seconds', 'background_transparency', 'border_width', 'history_lines', 'auto_scroll', 'text_color')}
         for key, field in [('provider', self.provider), ('audio_input', self.audio_input),
                            ('model', self.model), ('target', self.target), ('source', self.source), ('speech_model', self.speech_model)]:
             if key in values:
@@ -577,6 +585,11 @@ class Window(QMainWindow):
                 field.setValue(int(values[key]))
         if 'noise_filter' in values:
             self.noise.setChecked(bool(values['noise_filter']))
+        if 'text_color' in values:
+            index = self.text_color.findData(str(values['text_color']))
+            if index < 0:
+                raise ValueError('Caption text colour must be theme, white or black')
+            self.text_color.setCurrentIndex(index)
         if 'auto_scroll' in values:
             self.scroll.setChecked(bool(values['auto_scroll']))
         if 'token' in request:
@@ -672,19 +685,25 @@ def main():
         data = bytearray()
         def receive():
             data.extend(bytes(connection.readAll()))
+            # One request per line. "keep": true leaves the connection open for the
+            # next request (the bar widget's running-state watch); otherwise close.
+            while b'\n' in data:
+                line, _, rest = bytes(data).partition(b'\n')
+                data[:] = rest
+                keep = False
+                try:
+                    request = json.loads(line)
+                    keep = isinstance(request, dict) and request.get('keep') is True
+                    response = window.handle_request(request)
+                except (ValueError, TypeError, AttributeError) as exc:
+                    response = dict(error=str(exc))
+                connection.write((json.dumps(response) + '\n').encode())
+                connection.flush()
+                if not keep:
+                    connection.disconnectFromServer()
+                    return
             if len(data) > 65536:
                 connection.disconnectFromServer()
-                return
-            if b'\n' not in data:
-                return
-            try:
-                request = json.loads(bytes(data).split(b'\n', 1)[0])
-                response = window.handle_request(request)
-            except (ValueError, TypeError, AttributeError) as exc:
-                response = dict(error=str(exc))
-            connection.write((json.dumps(response) + '\n').encode())
-            connection.flush()
-            connection.disconnectFromServer()
         connection.readyRead.connect(receive)
         connection.disconnected.connect(lambda: connections.discard(connection))
         connection.disconnected.connect(connection.deleteLater)

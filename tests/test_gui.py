@@ -16,7 +16,7 @@ from core import DEFAULTS
 APP = QApplication.instance() or QApplication([])
 
 
-class WindowTests(unittest.TestCase):
+class WindowFixture(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.patches = [patch.object(gui, 'CONFIG', Path(self.directory.name)),
@@ -38,6 +38,29 @@ class WindowTests(unittest.TestCase):
         self.window.process = Mock()
         self.window.process.readAllStandardOutput.return_value = (json.dumps(event) + '\n').encode()
         self.window.read_events()
+
+
+class WindowTests(WindowFixture):
+    def test_caption_text_colour_switches_with_contrasting_backdrop(self):
+        theme = self.window.overlay_state()['theme']
+        for choice, text, back in (('black', '#000000', '#ffffff'), ('white', '#ffffff', '#000000')):
+            self.window.configure(dict(settings=dict(text_color=choice)))
+            state = self.window.overlay_state()['theme']
+            self.assertEqual((state['foreground'], state['background']), (text, back))
+            self.assertIn('color: ' + text, self.window.centralWidget().styleSheet())
+        self.window.configure(dict(settings=dict(text_color='theme')))
+        self.assertEqual(self.window.overlay_state()['theme']['foreground'], theme['foreground'])
+        self.assertEqual(self.window.current_settings()['text_color'], 'theme')
+
+    def test_caption_text_colour_changes_while_translating(self):
+        self.window.running = True
+        self.window.configure(dict(settings=dict(text_color='black', target='French')))
+        self.assertEqual(self.window.current_settings()['text_color'], 'black')
+        self.assertNotEqual(self.window.current_settings()['target'], 'French')
+
+    def test_unknown_text_colour_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.window.configure(dict(settings=dict(text_color='<b>red</b>')))
 
     def test_whisper_first_and_output_default(self):
         self.assertEqual(self.window.form.labelForField(self.window.speech_provider).text(), 'Speech provider')

@@ -1,0 +1,58 @@
+[Desktop Entry]
+Type=Application
+Name=Video Trans
+Comment=Live translated captions from audio output or microphone
+Exec=video-trans settings
+Icon=media-view-subtitles-symbolic
+Terminal=false
+Categories=AudioVideo;Video;Accessibility;
+Actions=ToggleCaptions;StartCaptions;StopCaptions;ShowCaptions;ClearCaptions;FollowCaptions;CaptionTextColor;UseAudioOutput;UseMicrophone;DownloadWhisper;SuggestModel;RefreshModels;
+X-Video-Trans-Managed=true
+
+[Desktop Action ToggleCaptions]
+Name=Start / stop captions
+Exec=video-trans toggle
+
+[Desktop Action StartCaptions]
+Name=Start captions
+Exec=video-trans start
+
+[Desktop Action StopCaptions]
+Name=Stop captions
+Exec=video-trans stop
+
+[Desktop Action ShowCaptions]
+Name=Show captions
+Exec=video-trans show
+
+[Desktop Action ClearCaptions]
+Name=Clear captions
+Exec=video-trans clear
+
+[Desktop Action FollowCaptions]
+Name=Follow new captions on / off
+Exec=video-trans follow
+
+[Desktop Action CaptionTextColor]
+Name=Switch caption text black / white
+Exec=video-trans text-color toggle
+
+[Desktop Action UseAudioOutput]
+Name=Capture audio output
+Exec=video-trans input "Audio output"
+
+[Desktop Action UseMicrophone]
+Name=Capture microphone
+Exec=video-trans input Microphone
+
+[Desktop Action DownloadWhisper]
+Name=Download Whisper model
+Exec=video-trans download
+
+[Desktop Action SuggestModel]
+Name=Auto-select local model
+Exec=video-trans suggest
+
+[Desktop Action RefreshModels]
+Name=Refresh models
+Exec=video-trans models

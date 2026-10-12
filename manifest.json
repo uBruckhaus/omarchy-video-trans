@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "ubruckhaus.video-trans",
   "name": "Video Trans",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "author": "uBruckhaus",
   "license": "MIT",
-  "description": "Live captions from audio output or microphone, with local Whisper and llama.cpp, Ollama or online translation.",
+  "description": "Live translated captions over any video, call or microphone: local Whisper, llama.cpp, Ollama or online translation. Guided setup, shortcut actions, black or white text.",
   "kinds": [
     "bar-widget"
   ],
