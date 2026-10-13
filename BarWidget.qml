@@ -36,7 +36,8 @@ Ui.BarWidget {
   Socket {
     id: controller
     path: root.uid ? root.runtimeDir + "/video-trans-" + root.uid + ".sock" : ""
-    function ask() { write('{"action":"state","keep":true}\n'); flush() }
+    // "brief": only running/starting/target, a small fixed-shape reply (no model list or status text).
+    function ask() { write('{"action":"brief","keep":true}\n'); flush() }
     onConnectionStateChanged: if (connected) ask()
     // The connection stays open while Video Trans runs; it only ends when the controller exits.
     onError: { root.running = false; connected = false }

@@ -102,6 +102,8 @@ Enter an OpenAI-compatible HTTPS base URL (with or without `/v1`), a model and a
 
 Browser OAuth sign-in, subscription-login scraping, provider-specific APIs and automatic token refresh are not implemented. Use a provider-issued API key or a valid access token from an authentication flow you manage. HTTP with credentials is accepted only for loopback endpoints; use HTTPS remotely.
 
+Provider replies are treated as untrusted, because the default endpoint is an unauthenticated loopback port that another local account could occupy. Every reply is read under a 4 MiB cap with one overall deadline (request timeout + 5 s) that covers the connection, headers and body. Only uncompressed replies are accepted. At most 200 model IDs are kept, each up to 160 characters of `A-Z a-z 0-9 . _ : / @ + -`. A translation is cut at 1000 characters. The bar icon polls the controller for only its running state and target language, never the model list or status text.
+
 Whisper still processes audio locally. **Only recognized text is sent to the selected translation endpoint**, including for online providers. Online API charges are governed by your provider account. No translation requests occur until Start.
 
 ## Resource lifecycle and local data

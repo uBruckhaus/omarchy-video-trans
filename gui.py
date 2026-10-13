@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QScrollArea,
     QPushButton, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from core import (CONFIG, LANGUAGES, auto_bright, caption_colors, load_settings, ppm_luminance, read_theme, sample_region,
+from core import (CONFIG, LANGUAGES, MAX_CAPTION_CHARS, auto_bright, caption_colors, clean_model_ids, load_settings, ppm_luminance, read_theme, sample_region,
                   save_json, text_color_options, valid_text_color)
 
 
@@ -40,6 +40,8 @@ class ResizeGrip(QWidget):
         super().mousePressEvent(event)
 
 
+MAX_STATUS_CHARS = 500
+MAX_OVERLAY_TEXT = 32 * 1024  # characters of caption history sent to the fullscreen overlay
 CONTRAST_LIMIT = 256 * 1024  # bytes of PPM from one brightness sample (normally < 2 KiB)
 
 
@@ -252,6 +254,7 @@ class Window(QMainWindow):
             self.render_captions()
 
     def set_status(self, text):
+        text = str(text)[:MAX_STATUS_CHARS]
         self.status.setText(text)
         self.captions.setPlaceholderText(text)
 
@@ -287,7 +290,7 @@ class Window(QMainWindow):
         transparency = self.transparency.value()
         width = self.border_width.value()
         text, back = caption_colors(theme, self.text_color.currentData(), self.auto_bright)
-        return dict(open=self.layer_open, text=self.captions.toPlainText(), status=self.status.text(), caption_received=self.caption_received,
+        return dict(open=self.layer_open, text=self.captions.toPlainText()[-MAX_OVERLAY_TEXT:], status=self.status.text(), caption_received=self.caption_received,
                     theme=theme | dict(foreground=text, background=back), font_size=self.font_size.value(), auto_scroll=self.scroll.isChecked(),
                     background_transparency=theme['background_transparency'] if transparency < 0 else transparency,
                     border_width=theme['border_width'] if width < 0 else width,
@@ -491,26 +494,26 @@ class Window(QMainWindow):
                 if index >= 0:
                     self.output.setCurrentIndex(index)
             elif kind == 'models':
-                self.models = event['models']
+                self.models = clean_model_ids(event['models'])
                 selected = self.model.currentText()
                 self.model.clear()
-                self.model.addItems(event['models'])
+                self.model.addItems(self.models)
                 if selected:
                     self.model.setCurrentText(selected)
             elif kind == 'suggestion':
-                self.models = event['models']
+                self.models = clean_model_ids(event['models'])
                 self.provider.setCurrentText(event['provider'])
                 self.endpoint.setText(event['endpoint'])
                 self.load_token()
                 self.model.clear()
-                self.model.addItems(event['models'])
-                self.model.setCurrentText(event['model'])
+                self.model.addItems(self.models)
+                self.model.setCurrentText(event['model'] if event['model'] in self.models else '')
                 self.set_status(event['reason'])
                 self.save()
             elif kind == 'caption':
                 self.caption_received = True
                 self.expire_captions()
-                self.caption_entries.append((time.monotonic(), event['text']))
+                self.caption_entries.append((time.monotonic(), str(event['text'])[:MAX_CAPTION_CHARS]))
                 self.caption_entries = self.caption_entries[-self.history.value():]
                 self.render_captions()
                 self.set_status('Listening · detected ' + event['language'] + ' → ' + self.target.currentText())
@@ -656,8 +659,17 @@ class Window(QMainWindow):
         self.apply_appearance()
         self.expire_captions()
 
+    def brief_state(self):
+        """What the bar widget polls every 2 s: a small, fixed-shape reply (no model list,
+        status or check text), since the shell reads it without a line-length cap."""
+        target = self.target.currentText()
+        return dict(running=self.running is True, starting=self.starting is True,
+                    settings=dict(target=target if target in LANGUAGES else ''))
+
     def handle_request(self, request):
         action = request.get('action', 'state')
+        if action == 'brief':
+            return self.brief_state()
         if action == 'overlay-state':
             self.track_overlay(request)
             return self.overlay_state()

@@ -337,3 +337,26 @@ class WindowTests(WindowFixture):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HostileStateTests(WindowFixture):
+    def test_model_events_are_capped_and_bar_poll_is_brief(self):
+        huge = ['x' * 1_000_000] + ['m%d' % i for i in range(50_000)] + [42, None]
+        self.event(dict(type='models', models=huge))
+        self.assertLessEqual(len(self.window.models), gui.clean_model_ids.__globals__['MAX_MODELS'])
+        self.assertLess(len(json.dumps(self.window.snapshot())), 64 * 1024)
+        self.event(dict(type='suggestion', models=huge, model='x' * 1_000_000, provider='llama.cpp',
+                        endpoint='http://127.0.0.1:8080', reason='r' * 1_000_000))
+        self.assertLess(len(json.dumps(self.window.snapshot())), 64 * 1024)
+        brief = self.window.handle_request(dict(action='brief', keep=True))
+        self.assertEqual(set(brief), {'running', 'starting', 'settings'})
+        self.assertEqual(brief['settings']['target'], 'German')
+        self.assertLess(len(json.dumps(brief)), 200)
+
+    def test_captions_and_status_are_bounded_for_the_overlay(self):
+        for _ in range(50):
+            self.event(dict(type='caption', text='y' * 1_000_000, language='en'))
+        self.event(dict(type='error', message='e' * 1_000_000))
+        state = self.window.overlay_state()
+        self.assertLessEqual(len(state['text']), gui.MAX_OVERLAY_TEXT)
+        self.assertLessEqual(len(state['status']), gui.MAX_STATUS_CHARS)

@@ -252,11 +252,41 @@ def capture_command(output, noise_filter=True, input_kind='Audio output'):
             '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1']
 
 
+def rows_of(reply, key):
+    """The dict rows of a model-list reply (at most a bounded number are looked at)."""
+    rows = reply.get(key, []) if isinstance(reply, dict) else []
+    return [row for row in rows[:4 * MAX_MODELS] if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+MAX_CAPTION_CHARS = 1000   # one caption is a few seconds of speech
+
+
 def clean_translation(text):
+    if not isinstance(text, str):
+        raise ValueError('Provider returned no usable translation.')
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.S).strip()
     if not text or '<think>' in text:
         raise ValueError('Provider returned no usable translation. Select a non-reasoning model.')
-    return text
+    return text[:MAX_CAPTION_CHARS]
+
+
+# Provider replies are untrusted: the default endpoint is an unauthenticated loopback port that
+# another local account can occupy. Every reply is read under a byte cap and one overall
+# deadline, and model IDs are capped in number, length and characters before anything keeps them.
+MAX_REPLY_BYTES = 4 * 1024 * 1024
+MAX_MODELS = 200
+MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,159}')
+
+
+def clean_model_ids(ids):
+    """At most MAX_MODELS distinct model IDs of the allowed shape; anything else is dropped."""
+    out = []
+    for model in ids if isinstance(ids, (list, tuple)) else ():
+        if isinstance(model, str) and MODEL_ID.fullmatch(model) and model not in out:
+            out.append(model)
+            if len(out) >= MAX_MODELS:
+                break
+    return out
 
 
 class Provider:
@@ -272,7 +302,8 @@ class Provider:
         if token and parsed.scheme != 'https' and not self.local:
             raise ValueError('Use HTTPS when sending credentials to a remote provider.')
         self.client = httpx.Client(timeout=httpx.Timeout(60, connect=5),
-                                   headers={'Authorization': 'Bearer ' + token} if token else {},
+                                   # Plain replies only: the byte cap counts what is kept, never a compressed stream.
+                                   headers={'Accept-Encoding': 'identity'} | ({'Authorization': 'Bearer ' + token} if token else {}),
                                    trust_env=False)
         self.started_service = None
         self.process = None
@@ -282,9 +313,43 @@ class Provider:
         self.stop = stop
 
     def request(self, path, body=None):
-        r = self.client.get(self.url + path) if body is None else self.client.post(self.url + path, json=body)
-        r.raise_for_status()
-        return r.json()
+        """JSON from the provider, read under MAX_REPLY_BYTES and one deadline for the whole reply
+        (connect, headers and body), so an endless or dripping responder cannot hold memory or time.
+        httpx only limits each read, so a watchdog closes the connection at the deadline."""
+        import threading
+        limit = (self.client.timeout.read or 60) + 5
+        deadline = time.monotonic() + limit
+        expired = threading.Event()
+
+        def abort():
+            expired.set()
+            self.client._transport.close()   # the blocked read fails; the next request reconnects
+        watchdog = threading.Timer(limit, abort)
+        watchdog.daemon = True
+        watchdog.start()
+        method, extra = ('GET', {}) if body is None else ('POST', dict(json=body))
+        try:
+            with self.client.stream(method, self.url + path, **extra) as r:
+                r.raise_for_status()
+                declared = r.headers.get('content-length', '')
+                if declared.isdigit() and int(declared) > MAX_REPLY_BYTES:
+                    raise ValueError('Provider reply too large.')
+                if r.headers.get('content-encoding', 'identity').lower() not in ('', 'identity'):
+                    raise ValueError('Provider reply is compressed; plain JSON expected.')
+                data = bytearray()
+                for chunk in r.iter_raw():
+                    data.extend(chunk)
+                    if len(data) > MAX_REPLY_BYTES:
+                        raise ValueError('Provider reply too large.')
+                    if time.monotonic() > deadline:
+                        raise TimeoutError('Provider reply took too long.')
+        except Exception:
+            if expired.is_set():
+                raise TimeoutError('Provider reply took too long.') from None
+            raise
+        finally:
+            watchdog.cancel()
+        return json.loads(bytes(data))
 
     def ensure_service(self):
         if self.kind == 'Online' or not self.local:
@@ -327,19 +392,19 @@ class Provider:
     def models(self):
         self.ensure_service()
         if self.kind == 'Ollama':
-            rows = self.request('/api/tags').get('models', [])
-            running = self.request('/api/ps').get('models', [])
-            loaded = {m['name'] for m in running}
-            ids = [m['name'] for m in rows]
+            rows = rows_of(self.request('/api/tags'), 'models')
+            running = rows_of(self.request('/api/ps'), 'models')
+            ids = clean_model_ids([m.get('name') for m in rows])
+            loaded = set(clean_model_ids([m.get('name') for m in running])) & set(ids)
         else:
             prefix = '' if self.url.endswith('/v1') else '/v1'
-            rows = self.request(prefix + '/models').get('data', [])
-            ids = [m['id'] for m in rows]
-            loaded = {m['id'] for m in rows if
-                      (m.get('status', {}).get('value') if isinstance(m.get('status'), dict) else m.get('status'))
-                      in ('loaded', 'loading', 'sleeping')}
-            # Older single-model servers have no status; treat as preloaded.
-            loaded |= {m['id'] for m in rows if 'status' not in m}
+            rows = rows_of(self.request(prefix + '/models'), 'data')
+            ids = clean_model_ids([m.get('id') for m in rows])
+            known = set(ids)
+            loaded = {m['id'] for m in rows if isinstance(m.get('id'), str) and m['id'] in known and (
+                'status' not in m or  # older single-model servers have no status; treat as preloaded
+                (m['status'].get('value') if isinstance(m['status'], dict) else m['status'])
+                in ('loaded', 'loading', 'sleeping'))}
         if not self.snapshot_known:
             self.preloaded = loaded
             self.snapshot_known = True

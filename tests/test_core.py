@@ -224,3 +224,128 @@ class CaptionColourTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HostileProviderTests(unittest.TestCase):
+    """The default endpoint is an unauthenticated loopback port another local account can occupy:
+    every reply must stay bounded in bytes and time, and model IDs in number and shape."""
+
+    def serve(self, handler):
+        import socket, threading
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(4)
+        stop = threading.Event()
+
+        def run():
+            listener.settimeout(0.2)
+            while not stop.is_set():
+                try:
+                    client, _ = listener.accept()
+                except OSError:
+                    continue
+                with client:
+                    client.settimeout(0.2)
+                    try:
+                        client.recv(65536)
+                        handler(client, stop)
+                    except OSError:
+                        pass
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (stop.set(), thread.join(2), listener.close()))
+        provider = Provider(DEFAULTS | dict(endpoint='http://127.0.0.1:%d' % listener.getsockname()[1], model='m'))
+        import httpx
+        provider.client.timeout = httpx.Timeout(2)
+        self.addCleanup(provider.client.close)
+        return provider
+
+    def test_endless_chunked_body_is_cut_at_the_cap(self):
+        def endless(client, stop):
+            client.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n')
+            chunk = b'x' * 65536
+            while not stop.is_set():
+                client.sendall(b'%x\r\n' % len(chunk) + chunk + b'\r\n')
+        provider = self.serve(endless)
+        with self.assertRaises(ValueError):
+            provider.request('/v1/models')
+
+    def test_dripping_body_hits_the_overall_deadline(self):
+        import time as timelib
+        def drip(client, stop):
+            client.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n')
+            while not stop.is_set():
+                client.sendall(b'x')
+                timelib.sleep(0.05)
+        provider = self.serve(drip)
+        started = timelib.monotonic()
+        with self.assertRaises(TimeoutError):
+            provider.request('/v1/models')
+        self.assertLess(timelib.monotonic() - started, 10)
+
+    def test_dripping_headers_hit_the_overall_deadline_and_client_recovers(self):
+        import time as timelib
+        calls = []
+        def drip_headers(client, stop):
+            calls.append(1)
+            if len(calls) > 1:
+                body = b'{"ok": true}'
+                client.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n' % len(body) + body)
+                return
+            client.sendall(b'HTTP/1.1 200 OK\r\n')
+            while not stop.is_set():
+                client.sendall(b'X-Drip: 1\r\n')
+                timelib.sleep(0.05)
+        provider = self.serve(drip_headers)
+        started = timelib.monotonic()
+        with self.assertRaises(TimeoutError):
+            provider.request('/v1/models')
+        self.assertLess(timelib.monotonic() - started, 10)
+        self.assertEqual(provider.request('/v1/models'), {'ok': True})
+
+    def test_huge_declared_length_is_refused_before_reading(self):
+        def huge(client, stop):
+            client.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 999999999999\r\n\r\n{}')
+        with self.assertRaises(ValueError):
+            self.serve(huge).request('/v1/models')
+
+    def test_normal_reply_still_parses(self):
+        body = json.dumps({'data': [{'id': 'qwen2.5:7b-instruct', 'status': {'value': 'loaded'}}]}).encode()
+        def normal(client, stop):
+            client.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n' % len(body) + body)
+        self.assertEqual(self.serve(normal).request('/v1/models')['data'][0]['id'], 'qwen2.5:7b-instruct')
+
+    def test_model_ids_are_capped_in_number_length_and_shape(self):
+        from core import clean_model_ids, MAX_MODELS
+        hostile = ['ok-model', 'x' * 100000, 'bad\nline', '<b>html</b>', 42, None, ['list'], {'d': 1},
+                   'ok-model', 'hf.co/org/Model-GGUF:Q4_K_M', ''] + ['m%d' % i for i in range(100000)]
+        ids = clean_model_ids(hostile)
+        self.assertEqual(ids[:2], ['ok-model', 'hf.co/org/Model-GGUF:Q4_K_M'])
+        self.assertEqual(len(ids), MAX_MODELS)
+        self.assertTrue(all(len(m) <= 160 for m in ids))
+        self.assertEqual(clean_model_ids('not a list'), [])
+
+    def test_models_survive_hostile_rows(self):
+        from core import MAX_MODELS
+        provider = Provider(DEFAULTS | dict(model='m'))
+        rows = [{'id': ['unhashable'], 'status': 'loaded'}, {'id': {'x': 1}}, 'row', None,
+                {'id': 'good', 'status': {'value': 'loaded'}}] + [{'id': 'm%d' % i} for i in range(5000)]
+        with patch.object(provider, 'request', return_value={'data': rows}), patch.object(provider, 'ensure_service'):
+            models = provider.models()
+        self.assertEqual(models[0], 'good')
+        self.assertLessEqual(len(models), MAX_MODELS)
+        self.assertIn('good', provider.preloaded)
+        ollama = Provider(DEFAULTS | dict(provider='Ollama', endpoint='http://127.0.0.1:11434', model='m'))
+        with patch.object(ollama, 'request', side_effect=[{'models': [{'name': ['x']}, {'name': 'llama3'}]}, {'models': 'nope'}]), \
+                patch.object(ollama, 'ensure_service'):
+            self.assertEqual(ollama.models(), ['llama3'])
+        for reply in ([], 'text', {'data': 'text'}, {'data': None}):
+            fresh = Provider(DEFAULTS | dict(model='m'))
+            with patch.object(fresh, 'request', return_value=reply), patch.object(fresh, 'ensure_service'):
+                self.assertEqual(fresh.models(), [])
+
+    def test_translation_is_capped(self):
+        from core import MAX_CAPTION_CHARS
+        self.assertEqual(len(clean_translation('a' * 10_000_000)), MAX_CAPTION_CHARS)
+        with self.assertRaises(ValueError):
+            clean_translation(['not', 'text'])
