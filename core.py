@@ -289,6 +289,47 @@ def clean_model_ids(ids):
     return out
 
 
+LOOPBACK_HOSTS = ('localhost', '127.0.0.1', '::1')
+
+
+def loopback_listeners(port, proc='/proc/net'):
+    """UIDs of the sockets listening on a loopback-reachable address (127.x, ::1 or a wildcard)
+    on this TCP port, read from /proc/net/tcp{,6}, which shows every socket's owner."""
+    owners = []
+    for name in ('tcp', 'tcp6'):
+        try:
+            lines = Path(proc, name).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 8 or fields[3] != '0A':   # 0A = LISTEN
+                continue
+            address, _, hex_port = fields[1].partition(':')
+            if int(hex_port, 16) != port:
+                continue
+            if name == 'tcp':
+                reachable = address == '00000000' or address.endswith('7F')   # little-endian 127.x.x.x
+            else:
+                # four little-endian words: :: , ::1 , ::ffff:127.x.x.x
+                reachable = address in ('0' * 32, '0' * 24 + '01000000') or (
+                    address.startswith('0' * 16 + 'FFFF0000') and address.endswith('7F'))
+            if reachable:
+                owners.append(int(fields[7]))
+    return owners
+
+
+def require_own_listener(port):
+    """Refuse a loopback provider port unless the current user's process is listening on it.
+    Another local account could otherwise occupy a free default port, answer the health and
+    model checks, and receive the recognised speech sent for translation."""
+    owners = loopback_listeners(port)
+    if not owners:
+        raise ConnectionError('No local provider is listening.')
+    if any(uid != os.getuid() for uid in owners):
+        raise PermissionError(f'Port {port} belongs to another user account; refusing to send text to it.')
+
+
 class Provider:
     def __init__(self, settings, token='', stop=None):
         import httpx
@@ -298,7 +339,8 @@ class Provider:
         parsed = urlparse(self.url)
         if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username:
             raise ValueError('Endpoint must be an HTTP(S) URL without credentials.')
-        self.local = parsed.hostname in ('localhost', '127.0.0.1', '::1')
+        self.local = parsed.hostname in LOOPBACK_HOSTS
+        self.port = parsed.port or (443 if parsed.scheme == 'https' else 80)
         if token and parsed.scheme != 'https' and not self.local:
             raise ValueError('Use HTTPS when sending credentials to a remote provider.')
         self.client = httpx.Client(timeout=httpx.Timeout(60, connect=5),
@@ -329,6 +371,8 @@ class Provider:
         watchdog.start()
         method, extra = ('GET', {}) if body is None else ('POST', dict(json=body))
         try:
+            if self.local:
+                require_own_listener(self.port)
             with self.client.stream(method, self.url + path, **extra) as r:
                 r.raise_for_status()
                 declared = r.headers.get('content-length', '')
@@ -358,6 +402,8 @@ class Provider:
         try:
             self.request(path)
             return
+        except PermissionError:
+            raise
         except Exception:
             pass
         if self.kind == 'llama.cpp':
@@ -385,6 +431,8 @@ class Provider:
             try:
                 self.request(path)
                 return
+            except PermissionError:
+                raise
             except Exception:
                 time.sleep(0.5)
         raise RuntimeError('Local provider failed to become ready.')

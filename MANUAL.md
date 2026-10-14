@@ -78,6 +78,7 @@ Stop closes the overlay immediately, then waits for in-flight inference and mode
 | No audio or no captions | Select the actual playback output, unmute playback and check the startup/status text. Refresh devices after changing hardware. |
 | False captions or wrong source language | Use a multilingual speech model; set a source language override for short/noisy speech. English-only models require an English source override. |
 | Translator unavailable | Check endpoint/model settings. Local backends need an existing installation; llama.cpp needs a compatible router/user service. |
+| "Port … belongs to another user account" | Another account on this computer is listening on the local provider port, so Video Trans sends it nothing. Stop that process, or move your own provider to a free port and set that endpoint. |
 | Online authentication error | Apply a valid provider-issued token, verify HTTPS and model access. Enter the model manually if discovery is unavailable. |
 | Slow or late captions | Try a smaller recognition/translation model, reduce competing workload, and review queue-drop status. |
 | Overlay disappears on another workspace | Return to the workspace where it opened. Capture remains active until Stop/Close. |

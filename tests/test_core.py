@@ -226,6 +226,44 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class LoopbackOwnerTests(unittest.TestCase):
+    HEADER = '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n'
+
+    def proc(self, tcp='', tcp6=''):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        Path(directory.name, 'tcp').write_text(self.HEADER + tcp)
+        Path(directory.name, 'tcp6').write_text(self.HEADER + tcp6)
+        return directory.name
+
+    @staticmethod
+    def row(address, port, state, uid):
+        return f'   0: {address}:{port:04X} 00000000:0000 {state} 00000000:00000000 00:00000000 00000000  {uid}        0 1 1 0\n'
+
+    def test_listeners_reachable_over_loopback(self):
+        from core import loopback_listeners
+        proc = self.proc(
+            tcp=self.row('0100007F', 8080, '0A', 1000) + self.row('00000000', 8080, '0A', 1001)
+                + self.row('0100A8C0', 8080, '0A', 1002)      # 192.168.0.1: not loopback
+                + self.row('0100007F', 8080, '01', 1003)      # established, not listening
+                + self.row('0100007F', 11434, '0A', 1004),    # another port
+            tcp6=self.row('0' * 24 + '01000000', 8080, '0A', 1005)
+                 + self.row('0' * 16 + 'FFFF0000' + '0100007F', 8080, '0A', 1006)
+                 + self.row('0' * 32, 8080, '0A', 1007))
+        self.assertEqual(loopback_listeners(8080, proc), [1000, 1001, 1005, 1006, 1007])
+
+    def test_require_own_listener(self):
+        from core import require_own_listener
+        mine, other = os.getuid(), os.getuid() + 1
+        for owners, error in (([mine], None), ([], ConnectionError), ([other], PermissionError),
+                              ([mine, other], PermissionError)):
+            with patch('core.loopback_listeners', return_value=owners):
+                if error:
+                    self.assertRaises(error, require_own_listener, 8080)
+                else:
+                    require_own_listener(8080)
+
+
 class HostileProviderTests(unittest.TestCase):
     """The default endpoint is an unauthenticated loopback port another local account can occupy:
     every reply must stay bounded in bytes and time, and model IDs in number and shape."""
@@ -259,6 +297,31 @@ class HostileProviderTests(unittest.TestCase):
         provider.client.timeout = httpx.Timeout(2)
         self.addCleanup(provider.client.close)
         return provider
+
+    def test_port_held_by_another_account_gets_no_text(self):
+        received = []
+
+        def answer(client, stop):
+            received.append(True)
+            body = b'{"status": "ok"}'
+            client.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n' % len(body) + body)
+        provider = self.serve(answer)
+        provider.snapshot_known = True
+        with patch('core.os.getuid', return_value=os.getuid() + 1), patch('core.subprocess.run') as run:
+            with self.assertRaises(PermissionError):
+                provider.ensure_service()
+            with self.assertRaises(PermissionError):
+                provider.translate('private microphone text', 'English')
+        run.assert_not_called()   # never starts a service behind a foreign listener
+        self.assertEqual(received, [])   # nothing, not even the health probe, reached it
+        self.assertIsNone(provider.started_service)
+
+    def test_own_listener_is_accepted(self):
+        def answer(client, stop):
+            body = b'{"status": "ok"}'
+            client.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n' % len(body) + body)
+        provider = self.serve(answer)
+        self.assertEqual(provider.request('/health'), {'status': 'ok'})
 
     def test_endless_chunked_body_is_cut_at_the_cap(self):
         def endless(client, stop):
