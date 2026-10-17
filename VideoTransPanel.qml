@@ -3,6 +3,7 @@ import QtQuick.Controls as Controls
 import Quickshell
 import Quickshell.Io
 import "native/Commons"
+import "native/Commons" as Commons
 import qs.Commons as Theme
 import "native/Ui" as Ui
 
@@ -145,8 +146,8 @@ Ui.Panel {
     width: parent.width
     height: groupColumn.implicitHeight + Style.space(20)
     radius: Style.cornerRadius
-    color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.04)
-    border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14)
+    color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.04)
+    border.color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.14)
     Column {
       id: groupColumn
       anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: Style.space(10)
@@ -158,7 +159,7 @@ Ui.Panel {
           spacing: Style.space(8)
           Text { text: group.icon; color: Theme.Color.accent; font.family: Style.font.family; font.pixelSize: Style.font.body + Style.space(4); anchors.verticalCenter: parent.verticalCenter }
           Text { id: groupTitle; text: group.title; color: Theme.Color.accent; font.family: Style.font.family; font.pixelSize: Style.font.body; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-          Text { text: "· " + group.summary; textFormat: Text.PlainText; color: Color.foreground; opacity: 0.7; elide: Text.ElideRight; width: parent.width - Style.space(150); font.family: Style.font.family; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+          Text { text: "· " + group.summary; textFormat: Text.PlainText; color: Commons.Color.foreground; opacity: 0.7; elide: Text.ElideRight; width: parent.width - Style.space(150); font.family: Style.font.family; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
         }
         Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: group.expanded ? "▾" : "▸"; color: Theme.Color.accent; font.family: Style.font.family; font.pixelSize: Style.font.body }
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: group.toggled() }
@@ -168,7 +169,7 @@ Ui.Panel {
   }
   component Note: Text {
     width: parent.width; textFormat: Text.PlainText; wrapMode: Text.Wrap
-    color: Color.foreground; opacity: 0.8; font.family: Style.font.family; font.pixelSize: Style.font.caption
+    color: Commons.Color.foreground; opacity: 0.8; font.family: Style.font.family; font.pixelSize: Style.font.caption
   }
 
   // A layer-shell panel that takes the keyboard when it opens; an xdg-popup
@@ -224,7 +225,7 @@ Ui.Panel {
             onClicked: root.showManualView = !root.showManualView
           }
         }
-        Text { width: parent.width; text: "Live translated captions from video, calls or your microphone."; color: Color.foreground; opacity: 0.65; font.family: Style.font.family; font.pixelSize: Style.font.body; wrapMode: Text.Wrap }
+        Text { width: parent.width; text: "Live translated captions from video, calls or your microphone."; color: Commons.Color.foreground; opacity: 0.65; font.family: Style.font.family; font.pixelSize: Style.font.body; wrapMode: Text.Wrap }
 
         Column {
           width: parent.width
@@ -236,7 +237,7 @@ Ui.Panel {
             radius: Style.cornerRadius
             color: Qt.rgba(Theme.Color.accent.r, Theme.Color.accent.g, Theme.Color.accent.b, 0.12)
             border.color: Theme.Color.accent
-            Text { id: summaryText; anchors.fill: parent; anchors.margins: Style.space(10); text: root.summary; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body; font.bold: true }
+            Text { id: summaryText; anchors.fill: parent; anchors.margins: Style.space(10); text: root.summary; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Commons.Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body; font.bold: true }
           }
           Row {
             width: parent.width; spacing: Style.spacing.md
@@ -256,7 +257,7 @@ Ui.Panel {
               anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: Style.space(10)
               spacing: Style.spacing.md
               Text { width: parent.width; text: root.setupBusy ? "Setting up…" : root.downloading ? "Downloading Whisper…" : "Not ready yet" + (root.failedSteps.length > 1 ? " · step 1 of " + root.failedSteps.length : ""); color: Theme.Color.accent; font.family: Style.font.family; font.pixelSize: Style.font.body; font.bold: true }
-              Text { width: parent.width; text: root.setupBusy ? root.setupState.message : root.downloading ? root.message : (root.setupState.phase === "error" && root.nextStep && root.nextStep.id === "runtime" ? root.setupState.message + "\n" : "") + (root.nextStep ? root.nextStep.problem : ""); textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body }
+              Text { width: parent.width; text: root.setupBusy ? root.setupState.message : root.downloading ? root.message : (root.setupState.phase === "error" && root.nextStep && root.nextStep.id === "runtime" ? root.setupState.message + "\n" : "") + (root.nextStep ? root.nextStep.problem : ""); textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Commons.Color.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body }
               Ui.Button { focusable: true; width: parent.width; visible: !root.setupBusy && !root.downloading && root.nextStep !== null && root.nextStep.fixes.length > 0; selected: true; bordered: true; enabled: !root.busy; text: visible ? root.nextStep.fixes[0].label : ""; onClicked: root.applyFix(root.nextStep.fixes[0]) }
               Ui.Button { focusable: true; visible: root.downloading; bordered: true; text: "Cancel download"; onClicked: root.request({action: "cancel-download"}) }
               Text { visible: !root.setupBusy && !root.downloading && root.nextStep !== null && root.nextStep.fixes.length > 1; text: root.showMoreFixes ? "▾ Other options" : "▸ Other options"; color: Theme.Color.accent; font.family: Style.font.family; font.pixelSize: Style.font.caption
@@ -283,8 +284,8 @@ Ui.Panel {
                 required property var modelData
                 width: parent.width
                 spacing: Style.spacing.sm
-                Text { width: Style.space(20); text: modelData.status === "checking" ? "…" : modelData.status === "error" ? "✕" : "✓"; color: modelData.status === "ok" ? "#66c98b" : modelData.status === "error" ? "#f16b72" : Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.body }
-                Text { width: parent.width - Style.space(28); text: modelData.label + ": " + modelData.detail; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                Text { width: Style.space(20); text: modelData.status === "checking" ? "…" : modelData.status === "error" ? "✕" : "✓"; color: modelData.status === "ok" ? "#66c98b" : modelData.status === "error" ? "#f16b72" : Commons.Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.body }
+                Text { width: parent.width - Style.space(28); text: modelData.label + ": " + modelData.detail; textFormat: Text.PlainText; wrapMode: Text.Wrap; color: Commons.Color.popups.text; font.family: Style.font.family; font.pixelSize: Style.font.caption }
               }
             }
           }
@@ -421,16 +422,16 @@ Ui.Panel {
               width: parent.width
               implicitHeight: manualSection.implicitHeight + Style.space(16)
               radius: Style.space(6)
-              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05)
+              color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.05)
               border.width: 1
-              border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.15)
+              border.color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.15)
               Column {
                 id: manualSection
                 anchors.fill: parent
                 anchors.margins: Style.space(8)
                 spacing: Style.space(4)
                 Text { width: parent.width; text: modelData.title; textFormat: Text.PlainText; color: Theme.Color.accent; font.family: Style.font.family; font.pixelSize: Theme.Style.font.bodySmall; font.bold: true; wrapMode: Text.Wrap }
-                Text { width: parent.width; text: modelData.body; textFormat: Text.PlainText; color: Color.foreground; opacity: 0.85; font.family: Style.font.family; font.pixelSize: Style.font.caption; wrapMode: Text.Wrap }
+                Text { width: parent.width; text: modelData.body; textFormat: Text.PlainText; color: Commons.Color.foreground; opacity: 0.85; font.family: Style.font.family; font.pixelSize: Style.font.caption; wrapMode: Text.Wrap }
               }
             }
           }
