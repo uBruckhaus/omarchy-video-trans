@@ -40,7 +40,9 @@ Ui.BarWidget {
     function ask() { write('{"action":"brief","keep":true}\n'); flush() }
     onConnectionStateChanged: if (connected) ask()
     // The connection stays open while Video Trans runs; it only ends when the controller exits.
-    onError: { root.running = false; connected = false }
+    // Quickshell sets connected back to false by itself; setting it here, inside the error
+    // signal of a closed connection, makes quickshell 0.3.2 free the socket twice and crash.
+    onError: root.running = false
     parser: SplitParser {
       onRead: function(line) {
         try { root.accept(JSON.parse(line)) } catch (e) {}
