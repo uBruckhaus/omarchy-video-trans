@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ubruckhaus.video-trans",
   "name": "Video Trans",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "author": "uBruckhaus",
   "license": "MIT",
   "description": "Live translated captions over any video, call or microphone: local Whisper, llama.cpp, Ollama or online translation. Guided setup, shortcut actions, auto-contrast text.",
