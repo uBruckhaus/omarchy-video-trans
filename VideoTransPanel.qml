@@ -112,8 +112,21 @@ Ui.Panel {
     if (fix.panel === "provider") showProvider = true
   }
   // Explicit paste (Ctrl+V) for text fields: the bridge reads the clipboard bounded.
-  property var pasteTarget: null
-  function pasteInto(field) { pasteTarget = field; request({action: "paste"}) }
+  // Each paste request remembers its own field, so a slow answer never lands in a field picked later.
+  property var pasteTargets: []
+  function pasteInto(field) {
+    var payload = {action: "paste"}
+    pasteTargets = pasteTargets.concat([{payload: payload, field: field}])
+    request(payload)
+  }
+  function takePasteTarget(payload) {
+    var hit = null
+    pasteTargets = pasteTargets.filter(function(entry) {
+      if (hit === null && entry.payload === payload) { hit = entry.field; return false }
+      return true
+    })
+    return hit
+  }
   function request(payload) {
     if (payload.action === "state" && (bridge.running || pending.length)) return
     pending = pending.concat([payload]); nextRequest()
@@ -125,10 +138,10 @@ Ui.Panel {
   function acceptResponse(text) {
     try {
       var data = JSON.parse(text)
+      var pasteField = currentRequest && currentRequest.action === "paste" ? takePasteTarget(currentRequest) : null
       if (data.error) { message = data.error; return }
       if (currentRequest.action === "paste") {
-        if (pasteTarget && data.clipboard) pasteTarget.insert(data.clipboard)
-        pasteTarget = null
+        if (pasteField && data.clipboard) pasteField.insert(data.clipboard)
         return
       }
       sessionState = data
