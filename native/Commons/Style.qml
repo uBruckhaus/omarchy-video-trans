@@ -30,6 +30,11 @@ QtObject {
   id: root
 
   property int cornerRadius: 0
+  // The panel's Corners setting (corners.js) sets cornerRadius (cards, frames, pop-ups, tool
+  // tips); controls read the two smaller sizes, switches the pill.
+  readonly property int controlRadius: Math.min(cornerRadius, 8)   // buttons, drop-downs, fields
+  readonly property int smallRadius: Math.min(cornerRadius, 4)     // check marks, tracks, badges
+  readonly property int pillRadius: cornerRadius > 0 ? 999 : 0     // round switches; 0 in Square
   property int gapsOut: 5
 
   // ---------------------------------------------------------- state tokens

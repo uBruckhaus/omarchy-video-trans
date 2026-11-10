@@ -40,7 +40,9 @@ Item {
 
   property bool cursorRing: interactive
   property int cursorPad: Style.space(6)
-  property bool rounded: Style.cornerRadius > 0
+  property bool rounded: Style.pillRadius > 0
+  // Frame of the keyboard-cursor ring.
+  property real radius: Style.controlRadius
   property color foreground: Commons.Color.foreground
   property color accent: Commons.Color.accent
 
@@ -70,7 +72,7 @@ Item {
     anchors.fill: parent
     visible: root.cursorRing && root.hot
     color: "transparent"
-    radius: Style.cornerRadius
+    radius: root.radius
     borderSpec: Border.controlSpec("hover-cursor", root.foreground, root.accent)
   }
 

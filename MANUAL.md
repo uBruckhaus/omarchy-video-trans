@@ -58,6 +58,8 @@ The caption overlay remains above fullscreen video on Wayland and belongs to the
 
 In **Captions**, expand **Caption window appearance** for background transparency, border thickness and retained history. These settings affect the captions only. Colors follow the current Omarchy theme. Background transparency does not fade the text. The default background is transparent and the 1 px border appears on focus; a value of −1 uses the theme's popup defaults.
 
+The **Panel** group sets the popup's **Corners** (like windows, 6 px, 12 px or square) and **F12 saves a screenshot** (on by default). With it on, F12 (no Ctrl, Shift, Alt or Super) saves a picture of the popup only, drawn by Qt, to `~/Pictures/Video Trans/` (private folder, `0600` files) and asks *What is wrong? (optional)*; Enter or Done saves the note next to it as `.txt`, Esc skips it. Nothing is sent anywhere. See the README for details.
+
 Recognition uses overlapping audio chunks, five seconds by default. Longer chunks add sentence context and latency. Captions do not delay or synchronize video playback. If processing falls behind, the bounded queue drops old audio and reports it. Noise suppression and voice detection reduce unwanted captions but cannot isolate one speaker from all music or background voices.
 
 ## Privacy and resource use

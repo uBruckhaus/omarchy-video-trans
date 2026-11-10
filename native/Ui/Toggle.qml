@@ -27,7 +27,7 @@ BorderSurface {
 
   // Switch shape follows the theme by default: pill on round, square on sharp.
   // Override per-instance if a caller wants the opposite.
-  property bool rounded: Style.cornerRadius > 0
+  property bool rounded: Style.pillRadius > 0
 
   property color foreground: Commons.Color.foreground
   property color accent: Commons.Color.accent
@@ -45,7 +45,7 @@ BorderSurface {
 
   implicitHeight: Math.max(54, content.implicitHeight + Style.spacing.huge)
   implicitWidth: Style.space(240)
-  radius: Style.cornerRadius
+  radius: Style.controlRadius
 
   readonly property bool _hot: hasCursor || mouse.containsMouse
   readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : (_hot ? "hover-cursor" : "normal"), foreground, accent)

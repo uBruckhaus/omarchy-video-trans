@@ -32,6 +32,9 @@ Item {
   property color accent: Commons.Color.accent
   readonly property var popupBorderSpec: Border.localOrSurfaceSpec("popups", "border", popupBorder, Commons.Color.popups.border, Style.normalBorderWidth)
   property string fontFamily: Style.font.family
+  // Corners: the field at the control size, its pop-up list at the card size.
+  property real controlRadius: Style.controlRadius
+  property real popupRadius: Style.cornerRadius
   property int rowHeight: Style.spacing.controlHeight
   property int popupRowHeight: Style.spacing.popupRowHeight
   property int popupMinHeight: Style.spacing.searchablePopupMinHeight
@@ -107,7 +110,7 @@ Item {
       id: trigger
       width: parent.width
       height: root.rowHeight
-      radius: Style.cornerRadius
+      radius: root.controlRadius
 
       readonly property bool _focused: trigger.activeFocus
       readonly property bool _hot: triggerHover.hovered || root.hasCursor
@@ -185,7 +188,7 @@ Item {
         background: BorderSurface {
           color: root.background
           borderSpec: root.popupBorderSpec
-          radius: Style.cornerRadius
+          radius: root.popupRadius
         }
 
         onOpened: {

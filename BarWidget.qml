@@ -1,7 +1,9 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons as Theme
 import qs.Ui as Ui
+import "corners.js" as Corners
 
 Ui.BarWidget {
   id: root
@@ -13,6 +15,22 @@ Ui.BarWidget {
   function open() { panel.open() }
   function close() { panel.close() }
   function closeForPopoutSwitch() { panel.closeForPopoutSwitch() }
+
+  // Corners of the popup's cards and controls, and the F12 screenshot key (the popup's Panel
+  // group). Both live in this widget's shell.json entry, the defaults as no key; the caption
+  // settings stay in ~/.config/video-trans/settings.json.
+  readonly property string cornersSetting: Corners.choice(String(root.setting("corners", "windows")))
+  readonly property var corners: Corners.sizes(cornersSetting, Theme.Style.cornerRadius)
+  readonly property bool screenshotKey: root.setting("screenshotKey", true) !== false
+  function saveSetting(key, value, fallback) {
+    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
+    var next = Object.assign({}, root.settings || {})
+    if (value === fallback) delete next[key]
+    else next[key] = value
+    root.bar.shell.updateEntryInline(root.moduleName, next)
+  }
+  function setCorners(code) { saveSetting("corners", Corners.choice(code), "windows") }
+  function setScreenshotKey(on) { saveSetting("screenshotKey", on === true, true) }
 
   // Translating (or starting): the icon turns the theme's green.
   property bool running: false

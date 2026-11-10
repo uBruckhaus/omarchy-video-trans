@@ -17,6 +17,8 @@ Column {
   property real fontSize: Style.font.body
   property real fieldWidth: Style.spacing.numberFieldWidth
   property bool hasCursor: false
+  // Corner radius of the field (the Corners setting's control size).
+  property real radius: Style.controlRadius
   property bool _hovered: false
   property alias field: spin
 
@@ -63,7 +65,7 @@ Column {
     background: BorderSurface {
       color: Style.controlFill(spin._focused, spin._hot, root.foreground, root.accent)
       borderSpec: spin._borderSpec
-      radius: Style.cornerRadius
+      radius: root.radius
 
       HoverHandler {
         onHoveredChanged: {

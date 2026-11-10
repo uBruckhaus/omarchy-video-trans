@@ -1,0 +1,301 @@
+import QtQuick
+import QtQuick.Window
+import Quickshell.Io
+import "native/Commons"
+import "native/Commons" as Commons
+import "native/Ui" as Ui
+
+// PanelShot.qml for the older panels with a vendored native/ kit and no I18n.js (Video Trans,
+// Screen Narrator): the same F12 screenshot and note, with the texts as a property (English by
+// default, as strings/common.py) and the plugin's own native/Ui Button and TextField. Keep the
+// logic the same as PanelShot.qml.
+// Shared copy: ~/Projects/omarchy-plugin-i18n/qml (install_shot.py); don't edit it in a plugin.
+//
+// Wrap the panel's content (the item with the panel's own key handler) in it:
+//
+//   Ui.KeyboardPanel {
+//     contentHeight: fittedContentHeight(Math.max(content.implicitHeight, shot.neededHeight))
+//     PanelShotNative {
+//       id: shot
+//       anchors.fill: parent
+//       pluginId: "<plugin id>"; folderName: "<Plugin name>"
+//       active: root.screenshotKey; panelOpen: root.opened; returnFocus: content
+//       corners: root.corners
+//       Flickable { … Column { id: content; Keys.onPressed: … } }
+//     }
+//   }
+//
+// Keys: the panel's own handler leaves F12 alone (it does not accept it), so F12 comes up to
+// this item; with a modifier, or while the setting is off, it is left alone. The panel's
+// handler should ignore keys while `shot.overlayOpen`. Corners: `corners` takes the sizes
+// from corners.js; without it the vendored Style's cornerRadius is used.
+Item {
+  id: shot
+
+  property string pluginId: ""
+  property string folderName: ""
+  property bool active: true            // the "F12 saves a screenshot" setting
+  property bool panelOpen: true         // the panel's `opened`: closing it keeps a typed note
+  property Item returnFocus: null       // gets the keys back when the overlay closes
+  property string helper: decodeURIComponent(Qt.resolvedUrl("shot_save.py").toString().replace(/^file:\/\//, ""))
+  // The texts (strings/common.py, English); a panel may pass its own map with the same keys.
+  property var texts: ({
+    shotKey: "F12 saves a screenshot",
+    shotKeyHint: "A picture of this panel goes to ~/Pictures/{0}; then you can add a note about what is wrong, saved next to it.",
+    shotSaved: "Screenshot saved", shotSavedAs: "Saved as {0}", shotNote: "What is wrong? (optional)", shotDone: "Done",
+    shotFailed: "The screenshot could not be saved: {0}", shotNoteFailed: "The note could not be saved: {0}",
+    corners: "Corners", cornersWindows: "Like windows ({0} px)", cornersSlight: "Slightly rounded ({0} px)",
+    cornersRounded: "Rounded ({0} px)", cornersSquare: "Square",
+    cornersHint: "Corners of the panel's cards and every control (buttons, choice boxes, fields); \u201cLike windows\u201d follows Hyprland's window rounding."
+  })
+  property color fg: Commons.Color.popups.text
+  property color dim: Qt.darker(fg, 1.45)
+  property string fontFamily: Style.font.family
+  property var corners: ({ radius: Style.cornerRadius, control: Math.min(Style.cornerRadius, 8),
+                           small: Math.min(Style.cornerRadius, 4), pill: Style.cornerRadius > 0 ? 999 : 0 })
+
+  // "" (nothing), "busy", "note" (saved, asking for a note), "error"
+  property string phase: ""
+  readonly property bool overlayOpen: phase === "note" || phase === "error"
+  readonly property bool busy: phase === "busy"
+  // The panel should be at least this tall while the overlay shows.
+  readonly property real neededHeight: overlayOpen ? card.implicitHeight + Style.space(24) : 0
+  property string savedPath: ""
+  property string savedShown: ""
+  property string errorText: ""
+  property bool grabbing: false
+  property var grabbed: null
+  property string tmpPath: ""
+
+  readonly property real pixelRatio: Screen.devicePixelRatio
+
+  signal saved(string path)
+
+  // t(key, [args]): the text with {0}, {1} … filled in (also for Corners.options(shot.t, …)).
+  function t(key, args) {
+    var text = texts && texts[key] !== undefined ? String(texts[key]) : key
+    var list = args || []
+    return text.replace(/\{(\d+)\}/g, function(all, n) { return list[n] !== undefined ? String(list[n]) : all })
+  }
+
+  function take() {
+    if (!active || phase !== "" || pluginId === "" || folderName === "") return
+    phase = "busy"
+    // A frame later: a layout changed in the same turn is only measured when it is drawn.
+    grabDelay.restart()
+  }
+
+  function grabNow() {
+    var width = Math.ceil(shot.width), height = Math.ceil(shot.height)
+    if (phase !== "busy") return
+    if (width <= 0 || height <= 0) { phase = ""; return }
+    var ratio = shot.pixelRatio > 0 ? shot.pixelRatio : 1
+    grabbing = true       // the backdrop below, so the picture has the panel's background
+    var started = shot.grabToImage(function(result) {
+      shot.grabbing = false
+      if (!result) { shot.fail("the panel could not be drawn"); return }
+      shot.grabbed = result
+      prepare.running = true
+    }, Qt.size(Math.round(width * ratio), Math.round(height * ratio)))
+    if (!started) { grabbing = false; fail("the panel could not be drawn") }
+  }
+
+  Timer { id: grabDelay; interval: 40; onTriggered: shot.grabNow() }
+
+  function randomName() {
+    var hex = "0123456789abcdef", name = ""
+    for (var i = 0; i < 24; i++) name += hex[Math.floor(Math.random() * 16)]
+    return name + ".png"
+  }
+
+  function answer(text) {
+    try { return JSON.parse(String(text).trim().split("\n").pop()) } catch (e) { return null }
+  }
+
+  function fail(message) {
+    grabbed = null
+    errorText = t("shotFailed", [message])
+    phase = "error"
+  }
+
+  function showNote(result) {
+    savedPath = result.path
+    savedShown = result.shown || result.path
+    noteField.clear()
+    phase = "note"
+    shot.saved(savedPath)
+    Qt.callLater(function() { if (shot.phase === "note") noteField.forceActiveFocus() })
+  }
+
+  // Done, Enter or the panel closing: the note (if any) goes next to the picture.
+  function finish(keepNote) {
+    if (phase === "note") {
+      var text = keepNote ? noteField.text.trim() : ""
+      phase = ""
+      if (text !== "") {
+        noteSaver.pendingText = text.slice(0, 4000)
+        noteSaver.command = ["python3", shot.helper, "note", shot.savedPath, shot.folderName]
+        noteSaver.stdinEnabled = true
+        noteSaver.running = true
+      }
+    } else if (phase === "error") {
+      phase = ""
+    } else {
+      return
+    }
+    noteField.clear()
+    if (returnFocus && panelOpen) returnFocus.forceActiveFocus()
+  }
+
+  onPanelOpenChanged: {
+    if (!panelOpen) finish(true)
+    else if (phase === "note") refocus.restart()   // saved while the panel was closed
+  }
+  // After the panel's own focus call on opening.
+  Timer { id: refocus; interval: 120; onTriggered: if (shot.phase === "note" && shot.panelOpen) noteField.forceActiveFocus() }
+  onActiveChanged: if (!active && phase === "busy") phase = ""
+
+  Keys.onPressed: function(event) {
+    var mods = Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier | Qt.MetaModifier
+    if (event.key === Qt.Key_F12 && !(event.modifiers & mods) && shot.active && shot.phase === "") {
+      shot.take()
+      event.accepted = true
+      return
+    }
+    if (!shot.overlayOpen) return
+    if (event.key === Qt.Key_Escape) shot.finish(false)
+    else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) shot.finish(true)
+    event.accepted = true            // nothing typed here reaches the panel behind the overlay
+  }
+
+  Process {
+    id: prepare
+    command: ["python3", shot.helper, "prepare", shot.pluginId]
+    stdout: StdioCollector { id: prepareOut }
+    onExited: function(code) {
+      var result = shot.answer(prepareOut.text)
+      if (!result || !result.ok || !result.dir) { shot.fail(result && result.error ? result.error : "python3 did not answer"); return }
+      shot.tmpPath = result.dir + "/" + shot.randomName()
+      var written = shot.grabbed && shot.grabbed.saveToFile(shot.tmpPath)
+      shot.grabbed = null
+      if (!written) { shot.fail("the picture could not be written"); return }
+      saver.command = ["python3", shot.helper, "save", shot.tmpPath, shot.folderName]
+      saver.running = true
+    }
+  }
+
+  Process {
+    id: saver
+    stdout: StdioCollector { id: saverOut }
+    onExited: function(code) {
+      var result = shot.answer(saverOut.text)
+      if (!result || !result.ok || !result.path) { shot.fail(result && result.error ? result.error : "python3 did not answer"); return }
+      if (shot.phase === "busy") shot.showNote(result)
+    }
+  }
+
+  Process {
+    id: noteSaver
+    property string pendingText: ""
+    stdinEnabled: true
+    stdout: StdioCollector { id: noteOut }
+    onStarted: {
+      noteSaver.write(noteSaver.pendingText)
+      noteSaver.pendingText = ""
+      noteSaver.stdinEnabled = false      // closes stdin: the helper reads to the end
+    }
+    onExited: function(code) {
+      var result = shot.answer(noteOut.text)
+      if (result && result.ok) return
+      shot.errorText = shot.t("shotNoteFailed", [result && result.error ? result.error : "python3 did not answer"])
+      if (shot.phase === "") shot.phase = "error"
+    }
+  }
+
+  // The panel's background, only while the picture is drawn (the card itself belongs to the shell).
+  Rectangle {
+    anchors.fill: parent
+    z: -1
+    visible: shot.grabbing
+    color: Commons.Color.popups.background
+  }
+
+  // ------------------------------------------------------------------ overlay
+  Rectangle {
+    id: scrim
+    anchors.fill: parent
+    z: 100
+    visible: shot.overlayOpen
+    color: Qt.rgba(Commons.Color.popups.background.r, Commons.Color.popups.background.g,
+                   Commons.Color.popups.background.b, 0.88)
+
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true }
+
+    Rectangle {
+      id: card
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: Math.max(Style.space(12), Math.round((parent.height - height) / 3))
+      width: parent.width - Style.space(16)
+      height: implicitHeight
+      implicitHeight: body.implicitHeight + Style.space(28)
+      radius: shot.corners.radius
+      color: Commons.Color.popups.background
+      border.width: 1
+      border.color: Qt.rgba(shot.fg.r, shot.fg.g, shot.fg.b, 0.3)
+
+      Column {
+        id: body
+        x: Style.space(14)
+        y: Style.space(14)
+        width: parent.width - Style.space(28)
+        spacing: Style.space(10)
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: shot.phase === "error" ? shot.errorText : shot.t("shotSaved")
+          wrapMode: Text.Wrap
+          color: shot.phase === "error" ? Commons.Color.urgent : shot.fg
+          font.family: shot.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: true
+        }
+        Text {
+          visible: shot.phase === "note"
+          width: parent.width
+          textFormat: Text.PlainText
+          text: shot.t("shotSavedAs", [shot.savedShown])
+          wrapMode: Text.WrapAnywhere
+          color: shot.dim
+          font.family: shot.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        Ui.TextField {
+          id: noteField
+          visible: shot.phase === "note"
+          width: parent.width
+          maximumLength: 4000
+          placeholderText: shot.t("shotNote")
+          foreground: shot.fg
+          radius: shot.corners.control
+          font: Qt.font({ family: shot.fontFamily, pixelSize: Style.font.bodySmall })
+          onAccepted: shot.finish(true)
+        }
+        Item {
+          width: parent.width
+          height: doneButton.implicitHeight
+          Ui.Button {
+            id: doneButton
+            anchors.right: parent.right
+            text: shot.t("shotDone")
+            bordered: true
+            radius: shot.corners.control
+            foreground: shot.fg
+            fontFamily: shot.fontFamily
+            onClicked: shot.finish(true)
+          }
+        }
+      }
+    }
+  }
+}

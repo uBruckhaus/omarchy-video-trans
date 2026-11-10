@@ -42,11 +42,26 @@ On Omarchy/Wayland the independent caption surface uses Quickshell's **overlay l
 
 ## Use
 
-The popup follows Screen Narrator's layout: a summary of the active setup, **▶ Start**, **■ Stop** and **Captions** buttons, the next-step card while something is missing, and three collapsible groups:
+The popup follows Screen Narrator's layout: a summary of the active setup, **▶ Start**, **■ Stop** and **Captions** buttons, the next-step card while something is missing, and four collapsible groups:
 
 - **Listening** — capture **Audio output** (what you hear: video, calls) or **Microphone**, the device, and the Whisper model with its download. **Recognition options** holds the spoken-language override, noise suppression and chunk length. Audio output captures every application playing through that device; mute unrelated audio.
 - **Translation** — target language, translator (llama.cpp, Ollama or Online) and model. **Choose automatically** considers the target language, multilingual model family and model size, excluding speech-synthesis, embedding and coding-only models; it is a heuristic, not a benchmark, and never downloads models. **Provider settings…** opens a subpage for the server address, model ID and API key (paste with Ctrl+V; Backspace returns).
 - **Captions** — clear or close the caption window, follow new captions, **Caption text colour** (Automatic by default: white or black, whichever reads better on the video just above the captions; or the Omarchy theme, white, yellow, cyan, green, orange, pink, blue, black or any `#rrggbb`; the backdrop adapts for contrast), display duration, font size (12–64) and **Caption window appearance** (transparency, border, history; `−1` uses the Omarchy theme default).
+- **Panel** — how the popup itself looks and the F12 key:
+  - **Corners:** *Like windows (… px)* (the default) follows Hyprland's window rounding (`decoration:rounding`, as the shell reads it), *Slightly rounded (6 px)*, *Rounded (12 px)* or *Square*. It rounds the popup's frame, its cards and manual sections, buttons, drop-downs and their lists, text and number fields, switches and tool tips (frame, cards, lists and tool tips at the full radius, buttons, drop-downs and fields at most 8 px; switches round, or square in *Square*). The bar icon and the caption window keep their own look.
+  - **F12 saves a screenshot** (on by default), see below.
+
+  Both are stored in the widget's own entry in `~/.config/omarchy/shell.json` (`"corners"`, and `"screenshotKey": false` when switched off); the defaults are stored as no key. The caption settings stay in `~/.config/video-trans/settings.json`.
+
+### F12: a screenshot of the popup, with a note
+
+While the popup is open, **F12** (without Ctrl, Shift, Alt or Super) saves a picture of the popup, for telling what is wrong with it:
+
+- **Only on F12.** Nothing is captured at any other time, and only the popup itself: Qt draws the popup's own content into the picture (`grabToImage`). No screen capture tool runs, nothing else on the screen (no video, no captions) is in it, and nothing is uploaded or sent anywhere.
+- **Where:** `~/Pictures/Video Trans/video-trans-<date>-<time>.png` (the pictures folder from `~/.config/user-dirs.dirs` when it is set there). The popup then names the file and asks **What is wrong? (optional)**; **Enter** or **Done** saves the text next to the picture as a `.txt` with the same name (at most 4000 characters; no text, no file), **Esc** skips it, and closing the popup keeps what was typed.
+- **Private files:** the folder is made `0700` when missing and only used when it is a real folder (not a link) of yours that no one else can write to; pictures and notes are new `0600` files, never written through a link or over an existing file (`-2`, `-3` … are added instead), and a picture that cannot be written completely is removed again.
+- **How:** the popup first writes the picture into its own folder `$XDG_RUNTIME_DIR/ubruckhaus.video-trans-shot/` (`0700`, in memory, cleared after ten minutes at the latest). `shot_save.py` (Python standard library, system `python3`) is then started with a fixed argument list, never through a shell: `prepare <plugin id>`, `save <picture> "Video Trans"` (checks that the picture is a regular file of yours in that folder, at most 32 MiB and a PNG, copies it as above and removes it), and `note <picture> "Video Trans"` with the note on its standard input. Each call answers with one line of JSON.
+- **Off:** switch **F12 saves a screenshot** off in the **Panel** group; F12 then does nothing in this popup.
 
 **▶ Start** opens the caption window and begins translation; if a requirement fails, a startup check lists target language, audio capture, Whisper, provider and model with ✓ / ✕. **Captions** opens the window without capturing. The bar icon turns the theme's green while captions run; right-click it to start or stop without opening the popup. Closing the popup leaves captions running; **■ Stop** closes the window, releases owned models and services and exits the controller. Settings save immediately, also while Video Trans is off.
 
@@ -122,6 +137,8 @@ Whisper still processes audio locally. **Only recognized text is sent to the sel
 | Isolated Python runtime | `~/.local/share/video-trans/runtime/` |
 | Whisper models | Hugging Face cache, usually `~/.cache/huggingface/hub/` |
 | Captions/audio | In memory only; not saved to disk |
+| Popup corners and F12 setting | the widget's entry in `~/.config/omarchy/shell.json` |
+| F12 screenshots and notes (only when you press F12) | `~/Pictures/Video Trans/` (0700 folder, 0600 files) |
 
 XDG config/data paths are respected. Credentials are stored only if **Save token locally** is selected; the file is owner-only plaintext, not an encrypted keychain. Provider tokens never go into the repository or settings file. No telemetry. Credentials and preferences remain after removing the plugin.
 
@@ -140,7 +157,7 @@ Rerun setup after updates to synchronize the isolated runtime with the pinned de
 omarchy plugin remove ubruckhaus.video-trans
 ```
 
-Removal deletes the plugin checkout and bar integration. It retains preferences, saved credentials, the isolated runtime and cached Whisper models. See the [manual](MANUAL.md#remove-and-clean-up) for optional cleanup. Removal leaves the `video-trans` command and desktop entry; delete `~/.local/bin/video-trans` and `~/.local/share/applications/video-trans.desktop` if you no longer want them. Setup never edits Hyprland bindings or replaces user configuration.
+Removal deletes the plugin checkout and bar integration. It retains preferences, saved credentials, the isolated runtime, cached Whisper models and any F12 screenshots in `~/Pictures/Video Trans/`. See the [manual](MANUAL.md#remove-and-clean-up) for optional cleanup. Removal leaves the `video-trans` command and desktop entry; delete `~/.local/bin/video-trans` and `~/.local/share/applications/video-trans.desktop` if you no longer want them. Setup never edits Hyprland bindings or replaces user configuration.
 
 ## Development and checks
 
@@ -149,8 +166,10 @@ bash setup.sh
 ~/.local/share/video-trans/runtime/bin/python -m unittest discover -s tests -v
 omarchy plugin validate .
 bash -n setup.sh launch.sh bridge.sh start.sh stop.sh toggle.sh
-python3 -m unittest tests.test_readiness tests.test_bridge   # also runs before setup, on the system Python
+python3 -m unittest tests.test_readiness tests.test_bridge tests.test_shot_save   # also run before setup, on the system Python
 ```
+
+`PanelShotNative.qml`, `shot_save.py` (with `tests/test_shot_save.py`) and `corners.js` come from the author's shared plugin kit and are the same in Screen Narrator.
 
 Tests cover device-type isolation, capture filters, provider protocols, ownership cleanup, credential permissions, target-sensitive model suggestions, Omarchy theme defaults, appearance overrides, plain-text caption rendering, retained captions and asynchronous close. They do not require models, audio capture or paid API calls. A full local integration check also passed: playback through a temporary silent sink → noise filtering → Whisper English detection → Gemma German translation → worker/service cleanup. Whisper rejected a synthetic non-speech noise sample. Online and Ollama integration need their respective accounts/installations.
 
