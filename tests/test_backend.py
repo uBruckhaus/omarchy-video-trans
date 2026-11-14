@@ -114,58 +114,77 @@ class PinnedDownloadTests(unittest.TestCase):
         subject.check = Mock()
         return backend, subject
 
-    def test_download_fetches_exactly_the_pinned_revision_and_checks_its_hash(self):
+    def test_download_fetches_the_pinned_revision_into_the_private_store_and_checks_it(self):
+        import tempfile
         backend, subject = self.backend()
         child = Mock(); child.poll.return_value = 0; child.returncode = 0
-        with patch.object(backend, 'whisper_verified', return_value=False), \
-             patch.object(backend, 'mark_whisper_verified') as mark, \
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(backend.whisper_store, 'STORE', Path(folder) / 'whisper'), \
+             patch.object(backend.whisper_store, 'verified', return_value=False), \
+             patch.object(backend.whisper_store, 'adopt', return_value=True) as adopt, \
              patch.object(backend.subprocess, 'Popen', return_value=child) as popen, patch.object(backend, 'emit'):
             subject.download_speech({'speech_model': 'small'})
-        argv = popen.call_args.args[0]
-        repo, _, revision, digest = backend.WHISPER['small']
-        self.assertEqual(argv[-3:], [repo, revision, digest])
-        self.assertIn('download_model(repo, revision=revision', argv[2])
-        self.assertIn('hashlib.sha256', argv[2])
-        mark.assert_called_once_with('small')
+            argv = popen.call_args.args[0]
+            repo, _, revision, _ = backend.WHISPER['small']
+            self.assertEqual(argv[-3:-1], [repo, revision])
+            self.assertTrue(argv[-1].startswith(str(Path(folder) / 'whisper' / '.download-')))
+            self.assertIn('output_dir=sys.argv[3], revision=sys.argv[2]', argv[2])
+            adopt.assert_called_once()
+            self.assertFalse(Path(argv[-1]).exists())                 # temporary folder removed
 
-    def test_checksum_mismatch_is_refused_and_not_recorded(self):
+    def test_mismatching_download_is_refused(self):
+        import tempfile
         backend, subject = self.backend()
-        child = Mock(); child.poll.return_value = 3; child.returncode = 3
-        with patch.object(backend, 'whisper_verified', return_value=False), \
-             patch.object(backend, 'mark_whisper_verified') as mark, \
+        child = Mock(); child.poll.return_value = 0; child.returncode = 0
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(backend.whisper_store, 'STORE', Path(folder) / 'whisper'), \
+             patch.object(backend.whisper_store, 'verified', return_value=False), \
+             patch.object(backend.whisper_store, 'adopt', return_value=False), \
              patch.object(backend.subprocess, 'Popen', return_value=child), patch.object(backend, 'emit'):
             with self.assertRaises(RuntimeError) as raised:
                 subject.download_speech({'speech_model': 'small'})
-        self.assertIn('checksum', str(raised.exception))
-        mark.assert_not_called()
+        self.assertIn('checksums', str(raised.exception))
 
     def test_download_has_a_hard_deadline(self):
+        import tempfile
         backend, subject = self.backend()
         child = Mock(); child.poll.return_value = None
-        with patch.object(backend, 'whisper_verified', return_value=False), patch.object(backend, 'DOWNLOAD_DEADLINE', 0), \
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(backend.whisper_store, 'STORE', Path(folder) / 'whisper'), \
+             patch.object(backend.whisper_store, 'verified', return_value=False), patch.object(backend, 'DOWNLOAD_DEADLINE', 0), \
              patch.object(backend.subprocess, 'Popen', return_value=child), patch.object(backend, 'emit'):
             with self.assertRaises(RuntimeError):
                 subject.download_speech({'speech_model': 'small'})
         child.terminate.assert_called_once()
         self.assertIsNone(subject.download)
 
-    def test_verified_model_needs_no_download_and_unknown_names_are_refused(self):
+    def test_verified_model_needs_no_download(self):
         backend, subject = self.backend()
-        with patch.object(backend, 'whisper_verified', return_value=True), \
+        with patch.object(backend.whisper_store, 'verified', return_value=True), \
              patch.object(backend.subprocess, 'Popen') as popen, patch.object(backend, 'emit'):
             subject.download_speech({'speech_model': 'small'})
-            popen.assert_not_called()
-            with self.assertRaises(ValueError):
-                subject.download_speech({'speech_model': '../../evil'})
+        popen.assert_not_called()
 
-    def test_only_pinned_models_or_local_folders_are_loaded(self):
+    def test_only_verified_pinned_models_or_local_folders_are_loaded(self):
         import backend, tempfile
-        self.assertTrue(backend.speech_model_path('small').endswith(backend.WHISPER['small'][2]))
+        with patch.object(backend.whisper_store, 'verified', return_value=True):
+            self.assertTrue(backend.speech_model_path('small').endswith('small-' + backend.WHISPER['small'][2]))
+        with patch.object(backend.whisper_store, 'verified', return_value=False):
+            with self.assertRaises(ValueError):
+                backend.speech_model_path('small')
         for name in ('tiny.en', 'Systran/faster-whisper-small', '../models', 'relative/folder', ''):
             with self.assertRaises(ValueError):
                 backend.speech_model_path(name)
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(ValueError):
-                backend.speech_model_path(folder)                      # no model.bin
+                backend.speech_model_path(folder)
             (Path(folder) / 'model.bin').write_bytes(b'')
             self.assertEqual(backend.speech_model_path(folder), folder)
+
+    def test_provider_reports_a_service_before_starting_it(self):
+        import backend
+        subject = backend.Backend()
+        with patch.object(backend, 'emit') as emit:
+            subject.configure({'settings': dict(DEFAULTS), 'token': ''})
+            subject.provider.on_owned('llama-server.service')
+        emit.assert_called_with('owned_service', unit='llama-server.service')

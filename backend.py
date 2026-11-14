@@ -7,11 +7,13 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
 from core import Provider, LANGUAGES, capture_command, audio_devices, local_provider_choice, suggest_model
-from readiness import WHISPER, mark_whisper_verified, whisper_snapshot, whisper_verified
+import whisper_store
+from whisper_store import MODELS as WHISPER
 
 DOWNLOAD_DEADLINE = 3600  # seconds for one Whisper model download and check
 
@@ -21,7 +23,9 @@ def speech_model_path(model):
     folder given as an absolute path. Other Hugging Face names have no pinned revision and
     are not downloaded."""
     if model in WHISPER:
-        return str(whisper_snapshot(model))
+        if not whisper_store.verified(model):
+            raise ValueError('Download Whisper ' + model + ' first.')
+        return str(whisper_store.folder(model))
     path = Path(model)
     if path.is_absolute() and (path / 'model.bin').is_file():
         return str(path)
@@ -86,6 +90,8 @@ class Backend:
         if not self.provider:
             self.signature = signature
             self.provider = Provider(settings, command.get('token', ''), self.stop)
+            # The GUI stops it should this worker have to be ended from outside.
+            self.provider.on_owned = lambda unit: emit('owned_service', unit=unit)
         else:
             self.provider.settings = settings
         return settings
@@ -151,48 +157,45 @@ class Backend:
             speech_model_path(model)  # a local model folder: nothing to download
             self.check('whisper', 'Whisper', 'ok', 'local model folder')
             return
-        if whisper_verified(model):
+        if whisper_store.verified(model):
             self.check('whisper', 'Whisper', 'ok', model + ' · downloaded and verified')
             return
         emit('status', message='Downloading/checking Whisper ' + model + '…')
-        repo, _, revision, digest = WHISPER[model]
-        # Exactly the pinned commit; model.bin must match its SHA256 before it is used.
-        # Downloads are cancellable children with a hard deadline; closing during
-        # first-run setup must not leave a network download alive.
+        repo, _, revision, _ = WHISPER[model]
+        store = whisper_store.private_store()
+        download = Path(tempfile.mkdtemp(prefix='.download-', dir=store))
+        # Exactly the pinned commit, into a private folder (not the shared Hugging Face
+        # cache); every file is checked against its pinned hash before the model is used.
+        # Downloads are cancellable children with a hard deadline.
         self.download = subprocess.Popen([
             sys.executable, '-c',
-            'import hashlib, sys\n'
+            'import sys\n'
             'from faster_whisper.utils import download_model\n'
-            'repo, revision, digest = sys.argv[1:4]\n'
-            'try:\n path = download_model(repo, revision=revision, local_files_only=True)\n'
-            'except Exception:\n path = download_model(repo, revision=revision)\n'
-            'h = hashlib.sha256()\n'
-            'with open(path + "/model.bin", "rb") as f:\n'
-            ' for block in iter(lambda: f.read(1 << 20), b""):\n  h.update(block)\n'
-            'sys.exit(0 if h.hexdigest() == digest else 3)\n',
-            repo, revision, digest], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        deadline = time.monotonic() + DOWNLOAD_DEADLINE
-        while self.download.poll() is None:
-            if self.stop.wait(0.2):
-                return
-            if time.monotonic() > deadline:
-                self.download.terminate()
-                try:
-                    self.download.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.download.kill()
-                    self.download.wait()
-                self.download = None
-                self.check('whisper', 'Whisper', 'error', 'Speech model download took too long')
-                raise RuntimeError('Speech model download did not finish within an hour. Check your connection and retry.')
-        code, self.download = self.download.returncode, None
-        if code == 3:
-            self.check('whisper', 'Whisper', 'error', 'Downloaded model does not match its checksum')
-            raise RuntimeError('The downloaded speech model did not match its published checksum and was not used.')
-        if code:
-            self.check('whisper', 'Whisper', 'error', 'Speech model download/load failed')
-            raise RuntimeError('Speech model download/load failed. Check internet access, disk space or the model name.')
-        mark_whisper_verified(model)
+            'download_model(sys.argv[1], output_dir=sys.argv[3], revision=sys.argv[2])\n',
+            repo, revision, str(download)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + DOWNLOAD_DEADLINE
+            while self.download.poll() is None:
+                if self.stop.wait(0.2):
+                    return
+                if time.monotonic() > deadline:
+                    self.download.terminate()
+                    try:
+                        self.download.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.download.kill()
+                        self.download.wait()
+                    self.check('whisper', 'Whisper', 'error', 'Speech model download took too long')
+                    raise RuntimeError('Speech model download did not finish within an hour. Check your connection and retry.')
+            if self.download.returncode:
+                self.check('whisper', 'Whisper', 'error', 'Speech model download/load failed')
+                raise RuntimeError('Speech model download/load failed. Check internet access, disk space or the model name.')
+            if not whisper_store.adopt(model, download):
+                self.check('whisper', 'Whisper', 'error', 'Downloaded model does not match its checksums')
+                raise RuntimeError('The downloaded speech model did not match its published checksums and was not used.')
+        finally:
+            self.download = None
+            shutil.rmtree(download, ignore_errors=True)  # a partial or rejected download
         self.check('whisper', 'Whisper', 'ok', model + ' · downloaded and verified')
 
     def run_capture(self, settings):
@@ -213,9 +216,6 @@ class Backend:
             return
         emit('status', message='Speech model ready · connecting to the translation provider…')
         self.provider.ensure_service()
-        if getattr(self.provider, 'started_service', None):
-            # The GUI stops it should this worker have to be ended from outside.
-            emit('owned_service', unit=self.provider.started_service)
         command = capture_command(settings['output'], settings['noise_filter'], settings.get('audio_input', 'Audio output'))
         self.capture = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         frames = queue.Queue(maxsize=6)

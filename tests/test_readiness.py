@@ -17,14 +17,8 @@ class StepTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         cache = Path(self.directory.name)
-        for model in ('small',):
-            snapshot = cache / ('models--' + readiness.WHISPER[model][0].replace('/', '--')) / 'snapshots' / readiness.WHISPER[model][2]
-            snapshot.mkdir(parents=True)
-            (snapshot / 'model.bin').write_bytes(b'')
-        verified = cache / 'whisper-verified.json'
-        verified.write_text(json.dumps({'small': readiness.WHISPER['small'][2] + ':' + readiness.WHISPER['small'][3]}))
         self.patches = [patch.dict(os.environ, HF_HUB_CACHE=str(cache)),
-                        patch.object(readiness, 'WHISPER_VERIFIED', verified),
+                        patch.object(readiness.whisper_store, 'verified', side_effect=lambda model: model == 'small'),
                         patch.object(readiness, 'runtime_ready', return_value=True),
                         patch.object(readiness, 'missing_packages', return_value=[]),
                         patch.object(readiness, 'default_device', return_value='usb.monitor'),
@@ -204,27 +198,53 @@ if __name__ == '__main__':
 
 
 class WhisperPinTests(unittest.TestCase):
-    def test_only_the_verified_pinned_revision_counts(self):
-        with tempfile.TemporaryDirectory() as folder:
-            cache = Path(folder); record = cache / 'verified.json'
-            repo, _, revision, digest = readiness.WHISPER['base']
-            other = cache / ('models--' + repo.replace('/', '--')) / 'snapshots/0000000000000000000000000000000000000000'
-            other.mkdir(parents=True); (other / 'model.bin').write_bytes(b'x')
-            with patch.dict(os.environ, HF_HUB_CACHE=str(cache)), patch.object(readiness, 'WHISPER_VERIFIED', record):
-                self.assertFalse(readiness.whisper_cached('base'))            # another revision is not used
-                pinned = readiness.whisper_snapshot('base'); pinned.mkdir(parents=True); (pinned / 'model.bin').write_bytes(b'x')
-                self.assertFalse(readiness.whisper_cached('base'))            # not verified yet
-                record.write_text(json.dumps({'base': revision + ':' + '0' * 64}))
-                self.assertFalse(readiness.whisper_cached('base'))            # recorded for another hash
-                readiness.mark_whisper_verified('base')
-                self.assertTrue(readiness.whisper_cached('base'))
-            self.assertEqual(pinned.name, revision)
+    def store(self, folder):
+        import whisper_store
+        return patch.object(whisper_store, 'STORE', Path(folder) / 'whisper')
 
-    def test_every_offered_model_is_pinned_to_a_commit_and_hash(self):
-        import re
-        for model, (repo, size, revision, digest) in readiness.WHISPER.items():
+    def write_model(self, target, files):
+        target.mkdir(parents=True, exist_ok=True)
+        for name, content in files.items():
+            (target / name).write_bytes(content)
+
+    def test_only_a_fully_matching_download_enters_the_store(self):
+        import hashlib, whisper_store
+        files = {'model.bin': b'weights', 'config.json': b'{}'}
+        pinned = {'model.bin': 'sha256:' + hashlib.sha256(b'weights').hexdigest(),
+                  'config.json': 'gitsha1:' + hashlib.sha1(b'blob 2\0{}').hexdigest()}
+        with tempfile.TemporaryDirectory() as folder, self.store(folder), \
+             patch.dict(whisper_store.MODELS, {'tiny': ('repo/tiny', '1 MB', 'a' * 40, pinned)}):
+            store = whisper_store.private_store()
+            self.assertEqual(oct(store.stat().st_mode & 0o777), '0o700')
+            bad = store / '.download-bad'; self.write_model(bad, files | {'model.bin': b'tampered'})
+            self.assertFalse(whisper_store.adopt('tiny', bad))
+            self.assertFalse(bad.exists()); self.assertFalse(whisper_store.verified('tiny'))
+            good = store / '.download-good'; self.write_model(good, files)
+            self.assertTrue(whisper_store.adopt('tiny', good))
+            self.assertTrue(whisper_store.verified('tiny'))
+            self.assertEqual(whisper_store.folder('tiny').name, 'tiny-' + 'a' * 40)
+            # A symlink swapped in later is not accepted.
+            target = whisper_store.folder('tiny') / 'model.bin'
+            target.unlink(); target.symlink_to('/etc/hostname')
+            self.assertFalse(whisper_store.verified('tiny'))
+
+    def test_symlinked_download_files_are_rejected(self):
+        import hashlib, whisper_store
+        with tempfile.TemporaryDirectory() as folder, self.store(folder):
+            outside = Path(folder) / 'outside.bin'; outside.write_bytes(b'weights')
+            pinned = {'model.bin': 'sha256:' + hashlib.sha256(b'weights').hexdigest()}
+            with patch.dict(whisper_store.MODELS, {'tiny': ('repo/tiny', '1 MB', 'b' * 40, pinned)}):
+                download = whisper_store.private_store() / '.download-x'; download.mkdir()
+                (download / 'model.bin').symlink_to(outside)
+                self.assertFalse(whisper_store.adopt('tiny', download))
+
+    def test_every_offered_model_pins_a_commit_and_every_file(self):
+        for model, (repo, size, revision, files) in readiness.WHISPER.items():
             self.assertRegex(revision, r'^[0-9a-f]{40}$', model)
-            self.assertRegex(digest, r'^[0-9a-f]{64}$', model)
+            self.assertIn('model.bin', files)
+            self.assertRegex(files['model.bin'], r'^sha256:[0-9a-f]{64}$')
+            for name, expected in files.items():
+                self.assertRegex(expected, r'^(sha256:[0-9a-f]{64}|gitsha1:[0-9a-f]{40})$', (model, name))
 
     def test_runtime_needs_the_current_lock_record(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -252,6 +272,17 @@ class WhisperPinTests(unittest.TestCase):
         self.assertIn('--reinstall', script)
         self.assertIn('uv pip sync', script)
         self.assertIn('python_version=3.12.14', script)
+        self.assertIn('--managed-python', script)
+
+    def test_package_install_has_a_deadline(self):
+        import subprocess
+        real_popen = subprocess.Popen
+        with patch('readiness.subprocess.Popen', side_effect=lambda argv, **kw: real_popen(['sleep', '30'])) as popen:
+            import time
+            start = time.monotonic()
+            self.assertEqual(readiness.install_packages(['ffmpeg'], deadline=1), 1)
+            self.assertLess(time.monotonic() - start, 4)
+        self.assertEqual(popen.call_args.args[0][:4], ['pkexec', 'pacman', '-S', '--needed'])
 
     def test_runtime_setup_has_a_deadline_and_ends_its_scope(self):
         calls = []

@@ -1,6 +1,7 @@
 """Video Trans: a resizable caption window with adjustable expiry and provider settings."""
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import sys
@@ -22,7 +23,10 @@ from core import (CONFIG, LANGUAGES, MAX_CAPTION_CHARS, auto_bright, caption_col
 STOP_GRACE_MS = 20000       # Stop/Close: time for the worker to release models and services itself
 SCOPE_STOP_TIMEOUT = '5s'   # then the scope is stopped: TERM to every process, KILL after 5 s
 START_DEADLINE_MS = (3600 + 600) * 1000   # download (1 h) + model load and provider
+PROVIDER_DEADLINE_MS = 180 * 1000          # Refresh models / Auto-select (service start + requests)
 OWNED_SERVICES = ('llama-server.service', 'ollama.service')
+# Stops the given units and succeeds only once none of them is active any more.
+END_UNITS = 'systemctl --user stop -- "$@" 2>/dev/null; for unit; do systemctl --user is-active --quiet -- "$unit" && exit 1; done; exit 0'
 
 
 class ResizeGrip(QWidget):
@@ -93,6 +97,10 @@ class Window(QMainWindow):
         self.boundary = QTimer(self)
         self.boundary.setSingleShot(True)
         self.boundary.timeout.connect(self.force_stop)
+        # Ends the worker's scope and the provider service it started; a new worker (or
+        # quitting) waits until this has confirmed that nothing of the old one is left.
+        self.cleanup = QProcess(self)
+        self.cleanup.finished.connect(self.cleanup_finished)
         layout = QVBoxLayout()
         wrapper = QWidget()
         wrapper.setObjectName('videoTransSurface')
@@ -393,6 +401,11 @@ class Window(QMainWindow):
     def send(self, action):
         if self.stopping:
             return False
+        if self.process.state() == QProcess.NotRunning and (self.worker_scope or self.owned_service):
+            # The previous worker's processes or service are not confirmed gone yet.
+            self.end_worker_units()
+            self.set_status('Still ending the previous speech worker · try again in a moment.')
+            return False
         if action in ('start', 'models', 'suggest'):
             self.last_error = ''
         if self.process.state() == QProcess.NotRunning:
@@ -409,6 +422,8 @@ class Window(QMainWindow):
                 return False
         data = dict(action=action, settings=self.current_settings(), token=self.token.text())
         self.process.write((json.dumps(data) + '\n').encode())
+        if action in ('models', 'suggest') and not self.deadline.isActive():
+            self.deadline.start(PROVIDER_DEADLINE_MS)  # these may start a provider service
         return True
 
     def worker_error(self, error):
@@ -473,13 +488,39 @@ class Window(QMainWindow):
 
     def deadline_passed(self):
         # Startup or a download that does not finish in time is stopped like Stop.
-        self.last_error = 'Startup took too long and was stopped' if self.starting else 'Download took too long and was stopped'
+        self.last_error = ('Startup took too long and was stopped' if self.starting else
+                           'Download took too long and was stopped' if self.downloading else
+                           'The provider did not answer in time and the worker was stopped')
         self.stop_capture()
 
-    def stop_scope(self):
-        """Ends every process left in the worker's scope (TERM, KILL after 5 s)."""
-        if self.worker_scope:
-            QProcess.startDetached('systemctl', ['--user', 'stop', self.worker_scope])
+    def worker_units(self):
+        units = []
+        if self.worker_scope and re.fullmatch(r'video-trans-worker-[0-9a-f]{16}\.scope', self.worker_scope):
+            units.append(self.worker_scope)
+        if self.owned_service in OWNED_SERVICES:
+            units.append(self.owned_service)
+        return units
+
+    def end_worker_units(self):
+        """Stops every process left in the worker's scope (TERM, KILL after 5 s) and the
+        provider service it started, then checks that none of them is still active."""
+        units = self.worker_units()
+        if not units:
+            self.worker_scope = self.owned_service = None
+            return
+        if self.cleanup.state() == QProcess.NotRunning:
+            self.cleanup.start('sh', ['-c', END_UNITS, 'sh', *units])
+
+    def cleanup_finished(self, code, status):
+        if code == 0 and status == QProcess.NormalExit:
+            self.worker_scope = self.owned_service = None
+            if self.closing:
+                QApplication.instance().quit()
+        elif self.closing:
+            QTimer.singleShot(1000, self, self.end_worker_units)
+        else:
+            self.set_status('Could not confirm that the previous speech worker stopped · retrying…')
+            QTimer.singleShot(2000, self, self.end_worker_units)
 
     def force_stop(self):
         """The final boundary of Stop/Close: the worker did not exit by itself."""
@@ -487,7 +528,7 @@ class Window(QMainWindow):
             return
         self.forced_stop = True
         self.set_status('Worker did not stop in time · ending it…')
-        self.stop_scope()
+        self.end_worker_units()
 
     def download_whisper(self):
         if self.running or self.stopping or self.downloading:
@@ -538,6 +579,8 @@ class Window(QMainWindow):
                 self.set_status(event['message'])
                 if kind == 'error':
                     self.last_error = event['message']
+                    if not self.starting and not self.downloading:
+                        self.deadline.stop()
             elif kind == 'outputs':
                 selected = self.output.currentData() or self.settings.get('output')
                 self.output.clear()
@@ -547,6 +590,8 @@ class Window(QMainWindow):
                 if index >= 0:
                     self.output.setCurrentIndex(index)
             elif kind == 'models':
+                if not self.starting and not self.downloading:
+                    self.deadline.stop()
                 self.models = clean_model_ids(event['models'])
                 selected = self.model.currentText()
                 self.model.clear()
@@ -554,6 +599,8 @@ class Window(QMainWindow):
                 if selected:
                     self.model.setCurrentText(selected)
             elif kind == 'suggestion':
+                if not self.starting and not self.downloading:
+                    self.deadline.stop()
                 self.models = clean_model_ids(event['models'])
                 self.provider.setCurrentText(event['provider'])
                 self.endpoint.setText(event['endpoint'])
@@ -574,12 +621,8 @@ class Window(QMainWindow):
     def finished(self, code, status):
         self.deadline.stop()
         self.boundary.stop()
-        self.stop_scope()  # whatever the worker left running (normally nothing)
-        self.worker_scope = None
-        if self.forced_stop and self.owned_service in OWNED_SERVICES:
-            # The worker could not stop the provider service it had started.
-            QProcess.startDetached('systemctl', ['--user', 'stop', self.owned_service])
-        self.owned_service = None
+        # Whatever the worker left (normally nothing): its scope and the service it started.
+        self.end_worker_units()
         if self.starting and not self.closing:
             for item in self.checks:
                 if item['status'] == 'checking':
@@ -593,7 +636,8 @@ class Window(QMainWindow):
         self.settings_widget.setEnabled(True)
         if self.closing:
             self.close()
-            QApplication.instance().quit()
+            if not self.worker_units():
+                QApplication.instance().quit()  # otherwise cleanup_finished quits once confirmed
         elif code != 0:
             self.set_status('Worker exited unexpectedly. Check provider configuration and restart.')
         elif self.last_error:
@@ -617,7 +661,9 @@ class Window(QMainWindow):
             event.ignore()
         else:
             event.accept()
-            if self.closing:
+            if self.worker_units():
+                self.end_worker_units()  # cleanup_finished quits once nothing is left
+            elif self.closing:
                 QApplication.instance().quit()
 
     def track_overlay(self, request):

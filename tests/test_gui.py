@@ -387,9 +387,10 @@ class WorkerLifecycleTests(WindowFixture):
         self.window.stop_capture()
         self.assertTrue(self.window.boundary.isActive())
         self.assertEqual(self.window.boundary.interval(), gui.STOP_GRACE_MS)
-        with patch.object(gui.QProcess, 'startDetached') as detached:
+        with patch.object(self.window.cleanup, 'start') as start:
             self.window.force_stop()
-        detached.assert_called_once_with('systemctl', ['--user', 'stop', 'video-trans-worker-0123456789abcdef.scope'])
+        program, args = start.call_args.args
+        self.assertEqual((program, args[0], args[2:]), ('sh', '-c', ['sh', 'video-trans-worker-0123456789abcdef.scope']))
         self.assertTrue(self.window.forced_stop)
         self.window.boundary.stop()
 
@@ -399,11 +400,44 @@ class WorkerLifecycleTests(WindowFixture):
         self.event({'type': 'owned_service', 'unit': 'sshd.service'})        # never a unit outside the list
         self.assertEqual(self.window.owned_service, 'ollama.service')
         self.window.forced_stop = True
-        with patch.object(gui.QProcess, 'startDetached') as detached:
+        with patch.object(self.window.cleanup, 'start') as start:
             self.window.finished(9, gui.QProcess.CrashExit)
-        self.assertIn((('systemctl', ['--user', 'stop', 'video-trans-worker-0123456789abcdef.scope']),), detached.call_args_list)
-        self.assertIn((('systemctl', ['--user', 'stop', 'ollama.service']),), detached.call_args_list)
+        self.assertEqual(start.call_args.args[1][3:], ['video-trans-worker-0123456789abcdef.scope', 'ollama.service'])
+        # Ownership is kept, and no new worker starts, until the stop is confirmed.
+        self.assertEqual(self.window.owned_service, 'ollama.service')
+        self.window.process = Mock(); self.window.process.state.return_value = gui.QProcess.NotRunning
+        self.patches[2].stop()
+        try:
+            with patch.object(self.window.cleanup, 'start'):
+                self.assertFalse(self.window.send('models'))
+        finally:
+            self.patches[2].start()
+        self.window.process.start.assert_not_called()
+        self.window.cleanup_finished(1, gui.QProcess.NormalExit)       # not confirmed: kept, retried
+        self.assertEqual(self.window.owned_service, 'ollama.service')
+        self.window.cleanup_finished(0, gui.QProcess.NormalExit)       # confirmed
         self.assertIsNone(self.window.owned_service)
+        self.assertIsNone(self.window.worker_scope)
+
+    def test_end_units_script_only_succeeds_when_nothing_is_active(self):
+        import subprocess
+        script = gui.END_UNITS
+        self.assertIn('is-active', script)
+        self.assertIn('"$@"', script)
+        self.assertEqual(subprocess.run(['sh', '-n', '-c', script]).returncode, 0)
+
+    def test_provider_actions_have_a_deadline(self):
+        process = Mock(); process.state.return_value = gui.QProcess.Running
+        self.window.process = process
+        self.patches[2].stop()
+        try:
+            self.window.send('models')
+        finally:
+            self.patches[2].start()
+        self.assertTrue(self.window.deadline.isActive())
+        self.assertEqual(self.window.deadline.interval(), gui.PROVIDER_DEADLINE_MS)
+        self.event({'type': 'models', 'models': []})
+        self.assertFalse(self.window.deadline.isActive())
 
     def test_start_and_download_have_deadlines(self):
         self.window.process = Mock()

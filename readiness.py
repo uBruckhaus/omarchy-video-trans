@@ -21,29 +21,15 @@ import time
 from urllib.parse import urlparse
 
 from core import save_json
+import whisper_store
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'video-trans'
 RUNTIME_PYTHON = DATA / 'runtime/bin/python'
 # Command → Arch package. Setup installs the missing ones through pkexec.
 PACKAGES = {'ffmpeg': 'ffmpeg', 'pactl': 'libpulse', 'quickshell': 'quickshell', 'uv': 'uv'}
-# faster-whisper model name → (Hugging Face repository, download size, pinned revision,
-# SHA256 of model.bin at that revision). Downloads fetch exactly that commit, and the model
-# is used only after model.bin matched the hash once (whisper_verified()).
-WHISPER = {'tiny': ('Systran/faster-whisper-tiny', '75 MB', 'd90ca5fe260221311c53c58e660288d3deb8d356',
-                    'dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1'),
-           'base': ('Systran/faster-whisper-base', '145 MB', 'ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66',
-                    'd01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9'),
-           'small': ('Systran/faster-whisper-small', '480 MB', '536b0662742c02347bc0e980a01041f333bce120',
-                     '3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671'),
-           'medium': ('Systran/faster-whisper-medium', '1.5 GB', '08e178d48790749d25932bbc082711ddcfdfbc4f',
-                      '9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae'),
-           'large-v3': ('Systran/faster-whisper-large-v3', '3 GB', 'edaa852ec7e145841d8ffdb056a99866b5f0a478',
-                        '69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1'),
-           # Hugging Face redirects this name to dropbox-dash/…; the revision is the same commit.
-           'turbo': ('mobiuslabsgmbh/faster-whisper-large-v3-turbo', '1.6 GB', '0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf',
-                     'e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da')}
-WHISPER_VERIFIED = DATA / 'whisper-verified.json'
+# Offered Whisper models (repository, size, pinned commit, file hashes): whisper_store.py.
+WHISPER = whisper_store.MODELS
 ENDPOINTS = {'llama.cpp': 'http://127.0.0.1:8080', 'Ollama': 'http://127.0.0.1:11434',
              'Online': 'https://api.openai.com/v1'}
 PASTE_LIMIT = 8 * 1024
@@ -89,46 +75,12 @@ def install_shortcuts():
         raise RuntimeError(lines[-1][:300] if lines else 'Could not add the shortcut actions.')
 
 
-def hub_cache():
-    return Path(os.environ.get('HF_HUB_CACHE') or Path(os.environ.get('HF_HOME') or
-                Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'huggingface') / 'hub')
-
-
-def whisper_snapshot(model):
-    """The folder of the pinned revision in the Hugging Face cache."""
-    repo, _, revision, _ = WHISPER[model]
-    return hub_cache() / ('models--' + repo.replace('/', '--')) / 'snapshots' / revision
-
-
-def whisper_verified(model):
-    """True once model.bin of the pinned revision matched its SHA256 (recorded by the worker)."""
-    if model not in WHISPER:
-        return False
-    try:
-        record = json.loads(WHISPER_VERIFIED.read_text())
-    except (OSError, ValueError):
-        return False
-    entry = record.get(model) if isinstance(record, dict) else None
-    _, _, revision, digest = WHISPER[model]
-    return entry == f'{revision}:{digest}' and (whisper_snapshot(model) / 'model.bin').is_file()
-
-
-def mark_whisper_verified(model):
-    try:
-        record = json.loads(WHISPER_VERIFIED.read_text())
-        record = record if isinstance(record, dict) else {}
-    except (OSError, ValueError):
-        record = {}
-    _, _, revision, digest = WHISPER[model]
-    record[model] = f'{revision}:{digest}'
-    save_json(WHISPER_VERIFIED, record)
-
-
 def whisper_cached(model):
-    """True when the pinned, verified model is on disk; unknown names count as present."""
+    """True when the pinned model is in the verified private store; other names (a local
+    model folder) are checked when Start loads them."""
     if model not in WHISPER:
         return True
-    return whisper_verified(model)
+    return whisper_store.verified(model)
 
 
 def loopback(url):
@@ -320,6 +272,28 @@ def report(phase, message, busy=True, echo=None):
         echo(message)
 
 
+PACKAGE_DEADLINE = 20 * 60  # seconds for the password prompt and the package transaction
+
+
+def install_packages(packages, deadline=PACKAGE_DEADLINE):
+    """pkexec pacman with a deadline. pkexec keeps this user's real UID, so a prompt left
+    open is ended (TERM, then KILL); a pacman transaction already running as root cannot
+    be signalled by this user and is never interrupted, so setup reports the failure and
+    pacman's own lock keeps the system consistent."""
+    proc = subprocess.Popen(['pkexec', 'pacman', '-S', '--needed', '--noconfirm', *packages],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        return proc.wait(timeout=deadline)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        return 1
+
+
 SETUP_DEADLINE = 45 * 60   # seconds for setup.sh (runtime packages) in total
 SETUP_TAIL = 4096
 
@@ -380,8 +354,7 @@ def run_setup(echo=None):
         packages = missing_packages()
         if packages:
             report('packages', 'Installing ' + ', '.join(packages) + ' · confirm the password prompt…', echo=echo)
-            if subprocess.run(['pkexec', 'pacman', '-S', '--needed', '--noconfirm', *packages],
-                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            if install_packages(packages):
                 raise RuntimeError('Installing ' + ', '.join(packages) + ' was cancelled or failed.')
         report('runtime', 'Preparing the private Python runtime and Whisper (a few minutes the first time)…', echo=echo)
         code, tail = run_runtime_setup()

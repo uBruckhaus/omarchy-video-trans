@@ -348,6 +348,7 @@ class Provider:
                                    headers={'Accept-Encoding': 'identity'} | ({'Authorization': 'Bearer ' + token} if token else {}),
                                    trust_env=False)
         self.started_service = None
+        self.on_owned = None  # called with the unit name before this provider starts it
         self.process = None
         self.used_models = set()
         self.preloaded = set()
@@ -409,6 +410,8 @@ class Provider:
         if self.kind == 'llama.cpp':
             unit = 'llama-server.service'
             already_active = subprocess.run(['systemctl', '--user', 'is-active', '--quiet', unit], capture_output=True, timeout=5).returncode == 0
+            if not already_active and self.on_owned:
+                self.on_owned(unit)  # known to the GUI before it can be started
             result = subprocess.run(['systemctl', '--user', 'start', unit], capture_output=True, timeout=30)
             if result.returncode:
                 raise RuntimeError('Cannot start llama-server.service. Configure a llama.cpp router user service first.')
@@ -417,6 +420,8 @@ class Provider:
         else:
             # Prefer a user service. Otherwise own a child process, never a system-wide service.
             already_active = subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'ollama.service'], capture_output=True, timeout=5).returncode == 0
+            if not already_active and self.on_owned:
+                self.on_owned('ollama.service')  # known to the GUI before it can be started
             result = subprocess.run(['systemctl', '--user', 'start', 'ollama.service'], capture_output=True, timeout=30)
             if result.returncode == 0:
                 if not already_active:

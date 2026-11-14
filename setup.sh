@@ -3,8 +3,8 @@ set -euo pipefail
 source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 runtime_dir="${XDG_DATA_HOME:-$HOME/.local/share}/video-trans/runtime"
 lock="$source_dir/requirements.lock"
-# Exact interpreter: uv installs this CPython build only after checking it against the
-# SHA256 it ships for that download.
+# Exact interpreter, uv-managed only (--managed-python): uv installs this CPython build
+# only after checking it against the SHA256 it ships for that download.
 python_version=3.12.14
 for dependency in ffmpeg pactl quickshell; do
   command -v "$dependency" >/dev/null || { echo "Missing $dependency. Install with: omarchy pkg add ffmpeg libpulse quickshell" >&2; exit 1; }
@@ -16,7 +16,7 @@ have="$(cat "$runtime_dir/.verified-lock" 2>/dev/null || true)"
 if [[ "$have" != "$want" ]]; then
   # A runtime not verified against this lock is made again, never upgraded in place.
   rm -rf -- "$runtime_dir"
-  uv venv --python "$python_version" --no-config "$runtime_dir"
+  uv venv --managed-python --python "$python_version" --no-config "$runtime_dir"
   # Exactly the lock's files (sha256 checked), wheels only, nothing else installed.
   uv pip sync --python "$runtime_dir/bin/python" --no-config --require-hashes --only-binary :all: --reinstall "$lock"
   printf '%s\n' "$want" > "$runtime_dir/.verified-lock"
