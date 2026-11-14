@@ -294,12 +294,13 @@ class WhisperPinTests(unittest.TestCase):
         def fake_popen(argv, **kwargs):
             started.append(real_popen(['sleep', '30'], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL))
             return started[-1]
-        def stop_scope(argv, **kwargs):
-            fake_run(argv)
+        def stop_scope(scope):
+            fake_run(['systemctl', '--user', 'stop', scope])
             started[-1].kill()   # what stopping the scope does to its processes
+            return True
         with patch.object(readiness, 'ROOT', Path(tempfile.gettempdir())), \
              patch('readiness.subprocess.Popen', side_effect=fake_popen) as popen, \
-             patch('readiness.subprocess.run', side_effect=stop_scope):
+             patch.object(readiness, 'scope_stopped', side_effect=stop_scope):
             import time
             start = time.monotonic()
             code, message = readiness.run_runtime_setup(deadline=1)
@@ -310,3 +311,14 @@ class WhisperPinTests(unittest.TestCase):
         self.assertTrue(calls[0][3].startswith('video-trans-setup-') and calls[0][3].endswith('.scope'))
         argv = popen.call_args.args[0]
         self.assertEqual(argv[:4], ['systemd-run', '--user', '--scope', '--quiet'])
+
+
+class ScopeStopTests(unittest.TestCase):
+    def test_scope_counts_as_stopped_only_when_systemd_says_so(self):
+        replies = iter(['active', 'activating', 'inactive'])
+        def run(argv, **kwargs):
+            return type('R', (), {'stdout': next(replies) if 'is-active' in argv else ''})()
+        with patch('readiness.subprocess.run', side_effect=run), patch('readiness.time.sleep'):
+            self.assertTrue(readiness.scope_stopped('video-trans-setup-x.scope'))
+        with patch('readiness.subprocess.run', side_effect=OSError('no bus')), patch('readiness.time.sleep'):
+            self.assertFalse(readiness.scope_stopped('video-trans-setup-x.scope'))

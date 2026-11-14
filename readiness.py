@@ -298,6 +298,23 @@ SETUP_DEADLINE = 45 * 60   # seconds for setup.sh (runtime packages) in total
 SETUP_TAIL = 4096
 
 
+def scope_stopped(scope):
+    """Stops a scope (TERM to every process in it, KILL after 10 s) and returns True only
+    once systemd reports it inactive or failed."""
+    for _ in range(3):
+        try:
+            subprocess.run(['systemctl', '--user', 'stop', '--', scope], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            state = subprocess.run(['systemctl', '--user', 'is-active', '--', scope], stdin=subprocess.DEVNULL,
+                                   capture_output=True, text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            state = ''
+        if state in ('inactive', 'failed'):
+            return True
+        time.sleep(1)
+    return False
+
+
 def run_runtime_setup(deadline=SETUP_DEADLINE):
     """Runs setup.sh in its own transient systemd scope with a hard total deadline.
     Only the last 4 KiB of its output are kept, in memory. When it ends, or the deadline
@@ -325,13 +342,15 @@ def run_runtime_setup(deadline=SETUP_DEADLINE):
                 tail = (tail + chunk)[-SETUP_TAIL:]
     finally:
         # Ends everything still in the scope (TERM, KILL after 10 s) and waits for it.
-        try:
-            subprocess.run(['systemctl', '--user', 'stop', scope], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        stopped = scope_stopped(scope)
         proc.stdout.close()
-        code = proc.wait()
+        try:
+            code = proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()  # systemd-run itself; the scope's processes were handled above
+            code = proc.wait(timeout=10)
+    if not stopped:
+        return 1, f'Runtime setup could not be confirmed stopped; check systemctl --user status {scope}.'
     if timed_out:
         return 1, 'Runtime setup took longer than 45 minutes and was stopped.'
     return code, tail.decode('utf-8', 'replace')

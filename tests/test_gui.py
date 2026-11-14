@@ -419,12 +419,48 @@ class WorkerLifecycleTests(WindowFixture):
         self.assertIsNone(self.window.owned_service)
         self.assertIsNone(self.window.worker_scope)
 
-    def test_end_units_script_only_succeeds_when_nothing_is_active(self):
-        import subprocess
-        script = gui.END_UNITS
-        self.assertIn('is-active', script)
-        self.assertIn('"$@"', script)
-        self.assertEqual(subprocess.run(['sh', '-n', '-c', script]).returncode, 0)
+    def test_end_units_script_only_succeeds_when_systemd_reports_inactive(self):
+        import subprocess, stat
+        with tempfile.TemporaryDirectory() as folder:
+            fake = Path(folder) / 'systemctl'
+            def check(state, stop_code=0):
+                fake.write_text(f'#!/bin/sh\ncase "$2" in stop) exit {stop_code} ;; is-active) printf %s "{state}"; [ "{state}" = active ] || exit 3 ;; esac\n')
+                fake.chmod(0o755)
+                env = dict(os.environ, PATH=folder + ':' + os.environ['PATH'])
+                return subprocess.run(['sh', '-c', gui.END_UNITS, 'sh', 'a.scope', 'b.service'], env=env).returncode
+            self.assertEqual(check('inactive'), 0)
+            self.assertEqual(check('failed'), 0)
+            self.assertEqual(check('inactive', stop_code=5), 0)   # stopping an unloaded unit
+            self.assertEqual(check('active'), 1)
+            self.assertEqual(check('deactivating'), 1)
+            self.assertEqual(check(''), 1)                         # manager unreachable
+
+    def test_cleanup_is_bounded_and_keeps_ownership_when_unconfirmed(self):
+        self.window.worker_scope = 'video-trans-worker-0123456789abcdef.scope'
+        self.window.owned_service = 'ollama.service'
+        with patch.object(self.window.cleanup, 'start'), patch.object(gui.QTimer, 'singleShot'):
+            self.window.end_worker_units()
+            self.assertTrue(self.window.cleanup_timer.isActive())
+            self.assertEqual(self.window.cleanup_timer.interval(), gui.CLEANUP_DEADLINE_MS)
+            for _ in range(gui.CLEANUP_ATTEMPTS):
+                self.window.cleanup_finished(1, gui.QProcess.NormalExit)
+                self.window.cleanup_attempts += 1
+        self.assertIn('Could not stop', self.window.last_error)
+        self.assertEqual(self.window.owned_service, 'ollama.service')   # still refused for new workers
+        self.window.cleanup_timer.stop()
+
+    def test_queued_provider_requests_keep_their_deadline(self):
+        process = Mock(); process.state.return_value = gui.QProcess.Running
+        self.window.process = process
+        self.patches[2].stop()
+        try:
+            self.window.send('models'); self.window.send('suggest')
+        finally:
+            self.patches[2].start()
+        self.event({'type': 'models', 'models': []})
+        self.assertTrue(self.window.deadline.isActive())      # the second one is still pending
+        self.event({'type': 'error', 'message': 'no provider'})
+        self.assertFalse(self.window.deadline.isActive())
 
     def test_provider_actions_have_a_deadline(self):
         process = Mock(); process.state.return_value = gui.QProcess.Running

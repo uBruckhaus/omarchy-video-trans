@@ -36,7 +36,7 @@ Then click the **Video Trans** bar icon. The popup shows a **Not ready yet** car
 
 When every step is done the card disappears and **✓ Ready** appears. Setup from a terminal works too: `bash ~/.config/omarchy/plugins/ubruckhaus.video-trans/setup.sh` (packages installed beforehand with `omarchy pkg add ffmpeg libpulse uv`). Setup never starts capture or a translation provider.
 
-The Whisper model (Tiny, Base, Small, Medium, Large v3 or Turbo) is chosen in **Listening**. First **Start** also downloads it if needed; Stop or Close cancels a download, and a download that has not finished after one hour is stopped. Each offered model is pinned to one Hugging Face commit, and its `model.bin` must match the SHA256 published for that commit before it is used; the check is recorded in `~/.local/share/video-trans/whisper-verified.json` and the model then loads offline from that snapshot. The full path of an existing local faster-whisper / CTranslate2 model folder also works (your own files, nothing is downloaded); other Hugging Face model names are not downloaded, because they have no pinned revision.
+The Whisper model (Tiny, Base, Small, Medium, Large v3 or Turbo) is chosen in **Listening**. First **Start** also downloads it if needed; Stop or Close cancels a download, and a download that has not finished after one hour is stopped. Each offered model is pinned to one Hugging Face commit, and its `model.bin` must match the SHA256 published for that commit before it is used; the download goes into a private folder (`~/.local/share/video-trans/whisper/`, mode 0700), every file it needs is checked there (`model.bin` by SHA256, the small files by their Git blob hash), and only then is it moved into place and marked verified; the model loads only from there, offline, never from the shared Hugging Face cache. The full path of an existing local faster-whisper / CTranslate2 model folder also works (your own files, nothing is downloaded); other Hugging Face model names are not downloaded, because they have no pinned revision.
 
 On Omarchy/Wayland the independent caption surface uses Quickshell's **overlay layer**, so it remains above fullscreen video. It belongs to the workspace where it opens: switching workspaces hides it, returning shows the same captions, and capture continues in the background. No Hyprland window rule is required. Drag anywhere inside it with the plain left mouse button to move it (Shift + drag selects text) and its bottom-right handle to resize it; the handle and border appear only while the pointer is over the captions. Scroll the mouse wheel to read earlier captions. ■ Stop and Close caption window in the popup close it and release owned resources.
 
@@ -135,7 +135,7 @@ Whisper still processes audio locally. **Only recognized text is sent to the sel
 | Preferences | `~/.config/video-trans/settings.json` |
 | Optional saved API keys/tokens | `~/.config/video-trans/credentials.json` (0600) |
 | Isolated Python runtime | `~/.local/share/video-trans/runtime/` |
-| Whisper models | Hugging Face cache, usually `~/.cache/huggingface/hub/` |
+| Whisper models | `~/.local/share/video-trans/whisper/` (private, verified; earlier versions used the Hugging Face cache, which can be deleted) |
 | Captions/audio | In memory only; not saved to disk |
 | Popup corners and F12 setting | the widget's entry in `~/.config/omarchy/shell.json` |
 | F12 screenshots and notes (only when you press F12) | `~/Pictures/Video Trans/` (0700 folder, 0600 files) |
