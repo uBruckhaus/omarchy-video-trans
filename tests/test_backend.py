@@ -105,3 +105,67 @@ class LifecycleTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PinnedDownloadTests(unittest.TestCase):
+    def backend(self):
+        import backend
+        subject = backend.Backend()
+        subject.check = Mock()
+        return backend, subject
+
+    def test_download_fetches_exactly_the_pinned_revision_and_checks_its_hash(self):
+        backend, subject = self.backend()
+        child = Mock(); child.poll.return_value = 0; child.returncode = 0
+        with patch.object(backend, 'whisper_verified', return_value=False), \
+             patch.object(backend, 'mark_whisper_verified') as mark, \
+             patch.object(backend.subprocess, 'Popen', return_value=child) as popen, patch.object(backend, 'emit'):
+            subject.download_speech({'speech_model': 'small'})
+        argv = popen.call_args.args[0]
+        repo, _, revision, digest = backend.WHISPER['small']
+        self.assertEqual(argv[-3:], [repo, revision, digest])
+        self.assertIn('download_model(repo, revision=revision', argv[2])
+        self.assertIn('hashlib.sha256', argv[2])
+        mark.assert_called_once_with('small')
+
+    def test_checksum_mismatch_is_refused_and_not_recorded(self):
+        backend, subject = self.backend()
+        child = Mock(); child.poll.return_value = 3; child.returncode = 3
+        with patch.object(backend, 'whisper_verified', return_value=False), \
+             patch.object(backend, 'mark_whisper_verified') as mark, \
+             patch.object(backend.subprocess, 'Popen', return_value=child), patch.object(backend, 'emit'):
+            with self.assertRaises(RuntimeError) as raised:
+                subject.download_speech({'speech_model': 'small'})
+        self.assertIn('checksum', str(raised.exception))
+        mark.assert_not_called()
+
+    def test_download_has_a_hard_deadline(self):
+        backend, subject = self.backend()
+        child = Mock(); child.poll.return_value = None
+        with patch.object(backend, 'whisper_verified', return_value=False), patch.object(backend, 'DOWNLOAD_DEADLINE', 0), \
+             patch.object(backend.subprocess, 'Popen', return_value=child), patch.object(backend, 'emit'):
+            with self.assertRaises(RuntimeError):
+                subject.download_speech({'speech_model': 'small'})
+        child.terminate.assert_called_once()
+        self.assertIsNone(subject.download)
+
+    def test_verified_model_needs_no_download_and_unknown_names_are_refused(self):
+        backend, subject = self.backend()
+        with patch.object(backend, 'whisper_verified', return_value=True), \
+             patch.object(backend.subprocess, 'Popen') as popen, patch.object(backend, 'emit'):
+            subject.download_speech({'speech_model': 'small'})
+            popen.assert_not_called()
+            with self.assertRaises(ValueError):
+                subject.download_speech({'speech_model': '../../evil'})
+
+    def test_only_pinned_models_or_local_folders_are_loaded(self):
+        import backend, tempfile
+        self.assertTrue(backend.speech_model_path('small').endswith(backend.WHISPER['small'][2]))
+        for name in ('tiny.en', 'Systran/faster-whisper-small', '../models', 'relative/folder', ''):
+            with self.assertRaises(ValueError):
+                backend.speech_model_path(name)
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):
+                backend.speech_model_path(folder)                      # no model.bin
+            (Path(folder) / 'model.bin').write_bytes(b'')
+            self.assertEqual(backend.speech_model_path(folder), folder)

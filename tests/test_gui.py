@@ -360,3 +360,58 @@ class HostileStateTests(WindowFixture):
         state = self.window.overlay_state()
         self.assertLessEqual(len(state['text']), gui.MAX_OVERLAY_TEXT)
         self.assertLessEqual(len(state['status']), gui.MAX_STATUS_CHARS)
+
+
+class WorkerLifecycleTests(WindowFixture):
+    def test_worker_starts_in_its_own_systemd_scope(self):
+        process = Mock()
+        process.state.return_value = gui.QProcess.NotRunning
+        process.waitForStarted.return_value = True
+        self.window.process = process
+        self.patches[2].stop()          # the real send()
+        try:
+            self.assertTrue(self.window.send('models'))
+        finally:
+            self.patches[2].start()
+        program, args = process.start.call_args.args
+        self.assertEqual(program, 'systemd-run')
+        self.assertEqual(args[:4], ['--user', '--scope', '--quiet', '--collect'])
+        self.assertEqual(args[4], '--unit=' + self.window.worker_scope)
+        self.assertRegex(self.window.worker_scope, r'^video-trans-worker-[0-9a-f]{16}\.scope$')
+        self.assertIn('backend.py', args[-1])
+
+    def test_stop_has_a_final_boundary_that_ends_the_scope(self):
+        self.window.process = Mock()
+        self.window.process.state.return_value = gui.QProcess.Running
+        self.window.worker_scope = 'video-trans-worker-0123456789abcdef.scope'
+        self.window.stop_capture()
+        self.assertTrue(self.window.boundary.isActive())
+        self.assertEqual(self.window.boundary.interval(), gui.STOP_GRACE_MS)
+        with patch.object(gui.QProcess, 'startDetached') as detached:
+            self.window.force_stop()
+        detached.assert_called_once_with('systemctl', ['--user', 'stop', 'video-trans-worker-0123456789abcdef.scope'])
+        self.assertTrue(self.window.forced_stop)
+        self.window.boundary.stop()
+
+    def test_forced_stop_also_stops_the_provider_service_the_worker_started(self):
+        self.window.worker_scope = 'video-trans-worker-0123456789abcdef.scope'
+        self.event({'type': 'owned_service', 'unit': 'ollama.service'})
+        self.event({'type': 'owned_service', 'unit': 'sshd.service'})        # never a unit outside the list
+        self.assertEqual(self.window.owned_service, 'ollama.service')
+        self.window.forced_stop = True
+        with patch.object(gui.QProcess, 'startDetached') as detached:
+            self.window.finished(9, gui.QProcess.CrashExit)
+        self.assertIn((('systemctl', ['--user', 'stop', 'video-trans-worker-0123456789abcdef.scope']),), detached.call_args_list)
+        self.assertIn((('systemctl', ['--user', 'stop', 'ollama.service']),), detached.call_args_list)
+        self.assertIsNone(self.window.owned_service)
+
+    def test_start_and_download_have_deadlines(self):
+        self.window.process = Mock()
+        self.window.process.state.return_value = gui.QProcess.Running
+        self.window.starting = True
+        self.window.deadline.start(gui.START_DEADLINE_MS)
+        self.window.deadline_passed()
+        self.assertFalse(self.window.deadline.isActive())
+        self.assertTrue(self.window.boundary.isActive())                     # stopped like Stop
+        self.assertIn('took too long', self.window.last_error)
+        self.window.boundary.stop()

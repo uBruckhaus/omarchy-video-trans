@@ -1,5 +1,6 @@
 """Disposable worker process. Models never live in the GUI or Omarchy shell."""
 import json
+from pathlib import Path
 import importlib.util
 import queue
 import shutil
@@ -10,6 +11,21 @@ import threading
 import time
 
 from core import Provider, LANGUAGES, capture_command, audio_devices, local_provider_choice, suggest_model
+from readiness import WHISPER, mark_whisper_verified, whisper_snapshot, whisper_verified
+
+DOWNLOAD_DEADLINE = 3600  # seconds for one Whisper model download and check
+
+
+def speech_model_path(model):
+    """The folder Whisper loads: the verified snapshot of a pinned model, or a local model
+    folder given as an absolute path. Other Hugging Face names have no pinned revision and
+    are not downloaded."""
+    if model in WHISPER:
+        return str(whisper_snapshot(model))
+    path = Path(model)
+    if path.is_absolute() and (path / 'model.bin').is_file():
+        return str(path)
+    raise ValueError('Choose one of the offered Whisper models, or enter the full path of a local faster-whisper model folder.')
 
 
 def emit(kind, **values):
@@ -130,23 +146,54 @@ class Backend:
         self.check('model', 'Translation model', 'ok', settings['model'])
 
     def download_speech(self, settings):
-        emit('status', message='Downloading/checking Whisper ' + settings['speech_model'] + '…')
-        # Downloads are cancellable children; closing during first-run setup must
-        # not leave a network download or a provider service alive.
+        model = settings['speech_model']
+        if model not in WHISPER:
+            speech_model_path(model)  # a local model folder: nothing to download
+            self.check('whisper', 'Whisper', 'ok', 'local model folder')
+            return
+        if whisper_verified(model):
+            self.check('whisper', 'Whisper', 'ok', model + ' · downloaded and verified')
+            return
+        emit('status', message='Downloading/checking Whisper ' + model + '…')
+        repo, _, revision, digest = WHISPER[model]
+        # Exactly the pinned commit; model.bin must match its SHA256 before it is used.
+        # Downloads are cancellable children with a hard deadline; closing during
+        # first-run setup must not leave a network download alive.
         self.download = subprocess.Popen([
             sys.executable, '-c',
-            'from faster_whisper import WhisperModel\nimport sys\n'
-            'try:\n WhisperModel(sys.argv[1], device="cpu", compute_type="int8", cpu_threads=4, local_files_only=True)\n'
-            'except Exception:\n WhisperModel(sys.argv[1], device="cpu", compute_type="int8", cpu_threads=4)\n',
-            settings['speech_model']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            'import hashlib, sys\n'
+            'from faster_whisper.utils import download_model\n'
+            'repo, revision, digest = sys.argv[1:4]\n'
+            'try:\n path = download_model(repo, revision=revision, local_files_only=True)\n'
+            'except Exception:\n path = download_model(repo, revision=revision)\n'
+            'h = hashlib.sha256()\n'
+            'with open(path + "/model.bin", "rb") as f:\n'
+            ' for block in iter(lambda: f.read(1 << 20), b""):\n  h.update(block)\n'
+            'sys.exit(0 if h.hexdigest() == digest else 3)\n',
+            repo, revision, digest], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + DOWNLOAD_DEADLINE
         while self.download.poll() is None:
             if self.stop.wait(0.2):
                 return
-        if self.download.returncode:
+            if time.monotonic() > deadline:
+                self.download.terminate()
+                try:
+                    self.download.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.download.kill()
+                    self.download.wait()
+                self.download = None
+                self.check('whisper', 'Whisper', 'error', 'Speech model download took too long')
+                raise RuntimeError('Speech model download did not finish within an hour. Check your connection and retry.')
+        code, self.download = self.download.returncode, None
+        if code == 3:
+            self.check('whisper', 'Whisper', 'error', 'Downloaded model does not match its checksum')
+            raise RuntimeError('The downloaded speech model did not match its published checksum and was not used.')
+        if code:
             self.check('whisper', 'Whisper', 'error', 'Speech model download/load failed')
             raise RuntimeError('Speech model download/load failed. Check internet access, disk space or the model name.')
-        self.download = None
-        self.check('whisper', 'Whisper', 'ok', settings['speech_model'] + ' · downloaded and ready')
+        mark_whisper_verified(model)
+        self.check('whisper', 'Whisper', 'ok', model + ' · downloaded and verified')
 
     def run_capture(self, settings):
         import numpy as np
@@ -158,12 +205,17 @@ class Backend:
         if self.stop.is_set():
             return
         # CPU int8 leaves the local GPU available to llama.cpp / Ollama.
-        self.speech = WhisperModel(settings['speech_model'], device='cpu', compute_type='int8', cpu_threads=4, local_files_only=True)
+        # The verified snapshot of the pinned revision, offline.
+        self.speech = WhisperModel(speech_model_path(settings['speech_model']), device='cpu', compute_type='int8',
+                                   cpu_threads=4, local_files_only=True)
         self.check('whisper', 'Whisper', 'ok', settings['speech_model'] + ' · ready')
         if self.stop.is_set():
             return
         emit('status', message='Speech model ready · connecting to the translation provider…')
         self.provider.ensure_service()
+        if getattr(self.provider, 'started_service', None):
+            # The GUI stops it should this worker have to be ended from outside.
+            emit('owned_service', unit=self.provider.started_service)
         command = capture_command(settings['output'], settings['noise_filter'], settings.get('audio_input', 'Audio output'))
         self.capture = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         frames = queue.Queue(maxsize=6)

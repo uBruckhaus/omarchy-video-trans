@@ -5,9 +5,11 @@ check is local and quick (files, pactl, systemctl, loopback HTTP); remote endpoi
 are never contacted here.
 """
 import fcntl
+import hashlib
 import json
 import os
 import re
+import selectors
 import socket
 from pathlib import Path
 import shutil
@@ -25,13 +27,23 @@ DATA = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'vi
 RUNTIME_PYTHON = DATA / 'runtime/bin/python'
 # Command → Arch package. Setup installs the missing ones through pkexec.
 PACKAGES = {'ffmpeg': 'ffmpeg', 'pactl': 'libpulse', 'quickshell': 'quickshell', 'uv': 'uv'}
-# faster-whisper model name → (Hugging Face repository, download size).
-WHISPER = {'tiny': ('Systran/faster-whisper-tiny', '75 MB'),
-           'base': ('Systran/faster-whisper-base', '145 MB'),
-           'small': ('Systran/faster-whisper-small', '480 MB'),
-           'medium': ('Systran/faster-whisper-medium', '1.5 GB'),
-           'large-v3': ('Systran/faster-whisper-large-v3', '3 GB'),
-           'turbo': ('mobiuslabsgmbh/faster-whisper-large-v3-turbo', '1.6 GB')}
+# faster-whisper model name → (Hugging Face repository, download size, pinned revision,
+# SHA256 of model.bin at that revision). Downloads fetch exactly that commit, and the model
+# is used only after model.bin matched the hash once (whisper_verified()).
+WHISPER = {'tiny': ('Systran/faster-whisper-tiny', '75 MB', 'd90ca5fe260221311c53c58e660288d3deb8d356',
+                    'dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1'),
+           'base': ('Systran/faster-whisper-base', '145 MB', 'ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66',
+                    'd01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9'),
+           'small': ('Systran/faster-whisper-small', '480 MB', '536b0662742c02347bc0e980a01041f333bce120',
+                     '3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671'),
+           'medium': ('Systran/faster-whisper-medium', '1.5 GB', '08e178d48790749d25932bbc082711ddcfdfbc4f',
+                      '9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae'),
+           'large-v3': ('Systran/faster-whisper-large-v3', '3 GB', 'edaa852ec7e145841d8ffdb056a99866b5f0a478',
+                        '69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1'),
+           # Hugging Face redirects this name to dropbox-dash/…; the revision is the same commit.
+           'turbo': ('mobiuslabsgmbh/faster-whisper-large-v3-turbo', '1.6 GB', '0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf',
+                     'e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da')}
+WHISPER_VERIFIED = DATA / 'whisper-verified.json'
 ENDPOINTS = {'llama.cpp': 'http://127.0.0.1:8080', 'Ollama': 'http://127.0.0.1:11434',
              'Online': 'https://api.openai.com/v1'}
 PASTE_LIMIT = 8 * 1024
@@ -51,7 +63,14 @@ def missing_packages():
 
 
 def runtime_ready():
-    return RUNTIME_PYTHON.is_file() and os.access(RUNTIME_PYTHON, os.X_OK)
+    """The runtime exists and was built from the current requirements.lock (setup.sh)."""
+    if not (RUNTIME_PYTHON.is_file() and os.access(RUNTIME_PYTHON, os.X_OK)):
+        return False
+    try:
+        record = (DATA / 'runtime/.verified-lock').read_text().strip()
+        return record == hashlib.sha256((ROOT / 'requirements.lock').read_bytes()).hexdigest()
+    except OSError:
+        return False
 
 
 def shortcuts_installed():
@@ -70,17 +89,46 @@ def install_shortcuts():
         raise RuntimeError(lines[-1][:300] if lines else 'Could not add the shortcut actions.')
 
 
+def hub_cache():
+    return Path(os.environ.get('HF_HUB_CACHE') or Path(os.environ.get('HF_HOME') or
+                Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'huggingface') / 'hub')
+
+
+def whisper_snapshot(model):
+    """The folder of the pinned revision in the Hugging Face cache."""
+    repo, _, revision, _ = WHISPER[model]
+    return hub_cache() / ('models--' + repo.replace('/', '--')) / 'snapshots' / revision
+
+
+def whisper_verified(model):
+    """True once model.bin of the pinned revision matched its SHA256 (recorded by the worker)."""
+    if model not in WHISPER:
+        return False
+    try:
+        record = json.loads(WHISPER_VERIFIED.read_text())
+    except (OSError, ValueError):
+        return False
+    entry = record.get(model) if isinstance(record, dict) else None
+    _, _, revision, digest = WHISPER[model]
+    return entry == f'{revision}:{digest}' and (whisper_snapshot(model) / 'model.bin').is_file()
+
+
+def mark_whisper_verified(model):
+    try:
+        record = json.loads(WHISPER_VERIFIED.read_text())
+        record = record if isinstance(record, dict) else {}
+    except (OSError, ValueError):
+        record = {}
+    _, _, revision, digest = WHISPER[model]
+    record[model] = f'{revision}:{digest}'
+    save_json(WHISPER_VERIFIED, record)
+
+
 def whisper_cached(model):
-    """True when faster-whisper finds the model offline; unknown names count as present."""
+    """True when the pinned, verified model is on disk; unknown names count as present."""
     if model not in WHISPER:
         return True
-    hub = os.environ.get('HF_HUB_CACHE') or str(Path(os.environ.get('HF_HOME') or
-          Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'huggingface') / 'hub')
-    snapshots = Path(hub) / ('models--' + WHISPER[model][0].replace('/', '--')) / 'snapshots'
-    try:
-        return any((snapshot / 'model.bin').is_file() for snapshot in snapshots.iterdir())
-    except OSError:
-        return False
+    return whisper_verified(model)
 
 
 def loopback(url):
@@ -272,6 +320,49 @@ def report(phase, message, busy=True, echo=None):
         echo(message)
 
 
+SETUP_DEADLINE = 45 * 60   # seconds for setup.sh (runtime packages) in total
+SETUP_TAIL = 4096
+
+
+def run_runtime_setup(deadline=SETUP_DEADLINE):
+    """Runs setup.sh in its own transient systemd scope with a hard total deadline.
+    Only the last 4 KiB of its output are kept, in memory. When it ends, or the deadline
+    passes, the scope is stopped, which ends and waits for every process it started
+    (whatever they did to their process group) before setup reports anything."""
+    scope = 'video-trans-setup-' + os.urandom(8).hex() + '.scope'
+    proc = subprocess.Popen(['systemd-run', '--user', '--scope', '--quiet', '--collect', '--unit=' + scope,
+                             '-p', 'TimeoutStopSec=10s', '--', 'bash', str(ROOT / 'setup.sh')],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    tail, timed_out = b'', False
+    end = time.monotonic() + deadline
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                left = end - time.monotonic()
+                if left <= 0:
+                    timed_out = True
+                    break
+                if not selector.select(min(left, 1.0)):
+                    continue
+                chunk = os.read(proc.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                tail = (tail + chunk)[-SETUP_TAIL:]
+    finally:
+        # Ends everything still in the scope (TERM, KILL after 10 s) and waits for it.
+        try:
+            subprocess.run(['systemctl', '--user', 'stop', scope], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        proc.stdout.close()
+        code = proc.wait()
+    if timed_out:
+        return 1, 'Runtime setup took longer than 45 minutes and was stopped.'
+    return code, tail.decode('utf-8', 'replace')
+
+
 def run_setup(echo=None):
     """Install missing system packages (pkexec), the runtime and the shortcut entries."""
     flags = os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0)
@@ -293,17 +384,7 @@ def run_setup(echo=None):
                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
                 raise RuntimeError('Installing ' + ', '.join(packages) + ' was cancelled or failed.')
         report('runtime', 'Preparing the private Python runtime and Whisper (a few minutes the first time)…', echo=echo)
-        # Output goes to a private log; only its last 4 KiB is read back for the error.
-        DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
-        log_fd, log_name = tempfile.mkstemp(prefix='setup-', suffix='.log', dir=DATA)
-        try:
-            with os.fdopen(log_fd, 'w+b') as log:
-                code = subprocess.run(['bash', str(ROOT / 'setup.sh')], stdin=subprocess.DEVNULL,
-                                      stdout=log, stderr=log).returncode
-                log.seek(max(0, log.seek(0, os.SEEK_END) - 4096))
-                tail = log.read(4096).decode('utf-8', 'replace')
-        finally:
-            os.unlink(log_name)
+        code, tail = run_runtime_setup()
         if code:
             lines = [line for line in tail.splitlines() if line.strip()]
             raise RuntimeError('Runtime setup failed: ' + (lines[-1][:300] if lines else 'see setup.sh output'))

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import os
 import sys
@@ -17,10 +18,13 @@ class StepTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         cache = Path(self.directory.name)
         for model in ('small',):
-            snapshot = cache / ('models--' + readiness.WHISPER[model][0].replace('/', '--')) / 'snapshots/abc'
+            snapshot = cache / ('models--' + readiness.WHISPER[model][0].replace('/', '--')) / 'snapshots' / readiness.WHISPER[model][2]
             snapshot.mkdir(parents=True)
             (snapshot / 'model.bin').write_bytes(b'')
+        verified = cache / 'whisper-verified.json'
+        verified.write_text(json.dumps({'small': readiness.WHISPER['small'][2] + ':' + readiness.WHISPER['small'][3]}))
         self.patches = [patch.dict(os.environ, HF_HUB_CACHE=str(cache)),
+                        patch.object(readiness, 'WHISPER_VERIFIED', verified),
                         patch.object(readiness, 'runtime_ready', return_value=True),
                         patch.object(readiness, 'missing_packages', return_value=[]),
                         patch.object(readiness, 'default_device', return_value='usb.monitor'),
@@ -197,3 +201,81 @@ class BridgeOfflineTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class WhisperPinTests(unittest.TestCase):
+    def test_only_the_verified_pinned_revision_counts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = Path(folder); record = cache / 'verified.json'
+            repo, _, revision, digest = readiness.WHISPER['base']
+            other = cache / ('models--' + repo.replace('/', '--')) / 'snapshots/0000000000000000000000000000000000000000'
+            other.mkdir(parents=True); (other / 'model.bin').write_bytes(b'x')
+            with patch.dict(os.environ, HF_HUB_CACHE=str(cache)), patch.object(readiness, 'WHISPER_VERIFIED', record):
+                self.assertFalse(readiness.whisper_cached('base'))            # another revision is not used
+                pinned = readiness.whisper_snapshot('base'); pinned.mkdir(parents=True); (pinned / 'model.bin').write_bytes(b'x')
+                self.assertFalse(readiness.whisper_cached('base'))            # not verified yet
+                record.write_text(json.dumps({'base': revision + ':' + '0' * 64}))
+                self.assertFalse(readiness.whisper_cached('base'))            # recorded for another hash
+                readiness.mark_whisper_verified('base')
+                self.assertTrue(readiness.whisper_cached('base'))
+            self.assertEqual(pinned.name, revision)
+
+    def test_every_offered_model_is_pinned_to_a_commit_and_hash(self):
+        import re
+        for model, (repo, size, revision, digest) in readiness.WHISPER.items():
+            self.assertRegex(revision, r'^[0-9a-f]{40}$', model)
+            self.assertRegex(digest, r'^[0-9a-f]{64}$', model)
+
+    def test_runtime_needs_the_current_lock_record(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder); (data / 'runtime/bin').mkdir(parents=True)
+            python = data / 'runtime/bin/python'; python.write_text(''); python.chmod(0o755)
+            with patch.object(readiness, 'DATA', data), patch.object(readiness, 'RUNTIME_PYTHON', python):
+                self.assertFalse(readiness.runtime_ready())
+                import hashlib
+                (data / 'runtime/.verified-lock').write_text(hashlib.sha256((readiness.ROOT / 'requirements.lock').read_bytes()).hexdigest() + '\n')
+                self.assertTrue(readiness.runtime_ready())
+
+    def test_requirements_lock_pins_every_package_with_hashes(self):
+        import re
+        entries = re.split(r'\n(?=\S)', '\n'.join(l for l in (readiness.ROOT / 'requirements.lock').read_text().splitlines()
+                                                 if l.strip() and not l.startswith('#')))
+        self.assertGreater(len(entries), 20)
+        for entry in entries:
+            self.assertRegex(entry, r'^[a-z0-9][a-z0-9._-]*==\S+ ')
+            self.assertRegex(entry, r'--hash=sha256:[0-9a-f]{64}')
+
+    def test_setup_script_rebuilds_from_the_hashed_lock(self):
+        script = (readiness.ROOT / 'setup.sh').read_text()
+        self.assertIn('--require-hashes', script)
+        self.assertIn('--only-binary :all:', script)
+        self.assertIn('--reinstall', script)
+        self.assertIn('uv pip sync', script)
+        self.assertIn('python_version=3.12.14', script)
+
+    def test_runtime_setup_has_a_deadline_and_ends_its_scope(self):
+        calls = []
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+        import subprocess
+        real_popen = subprocess.Popen
+        started = []
+        def fake_popen(argv, **kwargs):
+            started.append(real_popen(['sleep', '30'], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL))
+            return started[-1]
+        def stop_scope(argv, **kwargs):
+            fake_run(argv)
+            started[-1].kill()   # what stopping the scope does to its processes
+        with patch.object(readiness, 'ROOT', Path(tempfile.gettempdir())), \
+             patch('readiness.subprocess.Popen', side_effect=fake_popen) as popen, \
+             patch('readiness.subprocess.run', side_effect=stop_scope):
+            import time
+            start = time.monotonic()
+            code, message = readiness.run_runtime_setup(deadline=1)
+            self.assertLess(time.monotonic() - start, 4)
+        self.assertEqual(code, 1)
+        self.assertIn('45 minutes', message)
+        self.assertEqual(calls[0][:3], ['systemctl', '--user', 'stop'])
+        self.assertTrue(calls[0][3].startswith('video-trans-setup-') and calls[0][3].endswith('.scope'))
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[:4], ['systemd-run', '--user', '--scope', '--quiet'])

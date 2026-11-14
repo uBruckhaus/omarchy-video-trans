@@ -16,6 +16,14 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,
 from core import (CONFIG, LANGUAGES, MAX_CAPTION_CHARS, auto_bright, caption_colors, clean_model_ids, load_settings, ppm_luminance, read_theme, sample_region,
                   save_json, text_color_options, valid_text_color)
 
+# The worker runs in its own transient systemd scope (cgroup): ffmpeg, a model download and
+# an owned `ollama serve` belong to it whatever they do to their process group, and
+# `systemctl --user stop` of the scope ends and waits for all of them.
+STOP_GRACE_MS = 20000       # Stop/Close: time for the worker to release models and services itself
+SCOPE_STOP_TIMEOUT = '5s'   # then the scope is stopped: TERM to every process, KILL after 5 s
+START_DEADLINE_MS = (3600 + 600) * 1000   # download (1 h) + model load and provider
+OWNED_SERVICES = ('llama-server.service', 'ollama.service')
+
 
 class ResizeGrip(QWidget):
     """Always visible grip using compositor-native resizing on Wayland."""
@@ -76,6 +84,15 @@ class Window(QMainWindow):
         self.process.readyReadStandardError.connect(lambda: self.process.readAllStandardError())
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.worker_error)
+        self.worker_scope = None
+        self.owned_service = None
+        self.forced_stop = False
+        self.deadline = QTimer(self)
+        self.deadline.setSingleShot(True)
+        self.deadline.timeout.connect(self.deadline_passed)
+        self.boundary = QTimer(self)
+        self.boundary.setSingleShot(True)
+        self.boundary.timeout.connect(self.force_stop)
         layout = QVBoxLayout()
         wrapper = QWidget()
         wrapper.setObjectName('videoTransSurface')
@@ -380,8 +397,14 @@ class Window(QMainWindow):
             self.last_error = ''
         if self.process.state() == QProcess.NotRunning:
             self.buffer.clear()
-            self.process.start(sys.executable, ['-u', str(Path(__file__).with_name('backend.py'))])
+            self.forced_stop = False
+            self.owned_service = None
+            self.worker_scope = 'video-trans-worker-' + os.urandom(8).hex() + '.scope'
+            self.process.start('systemd-run', ['--user', '--scope', '--quiet', '--collect',
+                                               '--unit=' + self.worker_scope, '-p', 'TimeoutStopSec=' + SCOPE_STOP_TIMEOUT,
+                                               '--', sys.executable, '-u', str(Path(__file__).with_name('backend.py'))])
             if not self.process.waitForStarted(3000):
+                self.worker_scope = None
                 self.set_status('Worker failed to start. Press Set up now in the Video Trans popup.')
                 return False
         data = dict(action=action, settings=self.current_settings(), token=self.token.text())
@@ -434,6 +457,8 @@ class Window(QMainWindow):
         self.tabs.setCurrentIndex(0)
         if self.send('start') is False:
             self.worker_error(QProcess.FailedToStart)
+        else:
+            self.deadline.start(START_DEADLINE_MS)
 
     def stop_capture(self):
         if self.process.state() != QProcess.NotRunning:
@@ -442,6 +467,27 @@ class Window(QMainWindow):
             self.stopping = True
             self.start.setEnabled(False)
             self.stop.setEnabled(False)
+            self.deadline.stop()
+            if not self.boundary.isActive():
+                self.boundary.start(STOP_GRACE_MS)
+
+    def deadline_passed(self):
+        # Startup or a download that does not finish in time is stopped like Stop.
+        self.last_error = 'Startup took too long and was stopped' if self.starting else 'Download took too long and was stopped'
+        self.stop_capture()
+
+    def stop_scope(self):
+        """Ends every process left in the worker's scope (TERM, KILL after 5 s)."""
+        if self.worker_scope:
+            QProcess.startDetached('systemctl', ['--user', 'stop', self.worker_scope])
+
+    def force_stop(self):
+        """The final boundary of Stop/Close: the worker did not exit by itself."""
+        if self.process.state() == QProcess.NotRunning:
+            return
+        self.forced_stop = True
+        self.set_status('Worker did not stop in time · ending it…')
+        self.stop_scope()
 
     def download_whisper(self):
         if self.running or self.stopping or self.downloading:
@@ -451,6 +497,8 @@ class Window(QMainWindow):
         self.set_status('Downloading/checking Whisper ' + self.speech_model.currentText() + '…')
         if self.send('download') is False:
             self.downloading = False
+        else:
+            self.deadline.start(START_DEADLINE_MS)
 
     def toggle_compact(self):
         compact = self.tabs.isTabVisible(1)
@@ -475,11 +523,16 @@ class Window(QMainWindow):
                     self.checks = [row if item['id'] == row['id'] else item for item in self.checks]
                 else:
                     self.checks.append(row)
+            elif kind == 'owned_service':
+                if event.get('unit') in OWNED_SERVICES:
+                    self.owned_service = event['unit']
             elif kind == 'downloaded':
                 self.downloading = False
+                self.deadline.stop()
                 self.set_status('Whisper ' + event['model'] + ' downloaded and ready. Press Start to translate.')
             elif kind == 'started':
                 self.starting = False
+                self.deadline.stop()
                 self.set_status('Listening · waiting for speech from the selected audio device…')
             elif kind in ('error', 'status'):
                 self.set_status(event['message'])
@@ -519,6 +572,14 @@ class Window(QMainWindow):
                 self.set_status('Listening · detected ' + event['language'] + ' → ' + self.target.currentText())
 
     def finished(self, code, status):
+        self.deadline.stop()
+        self.boundary.stop()
+        self.stop_scope()  # whatever the worker left running (normally nothing)
+        self.worker_scope = None
+        if self.forced_stop and self.owned_service in OWNED_SERVICES:
+            # The worker could not stop the provider service it had started.
+            QProcess.startDetached('systemctl', ['--user', 'stop', self.owned_service])
+        self.owned_service = None
         if self.starting and not self.closing:
             for item in self.checks:
                 if item['status'] == 'checking':
