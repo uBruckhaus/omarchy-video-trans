@@ -294,9 +294,10 @@ class WhisperPinTests(unittest.TestCase):
         def fake_popen(argv, **kwargs):
             started.append(real_popen(['sleep', '30'], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL))
             return started[-1]
-        def stop_scope(scope):
+        def stop_scope(scope, launcher=None):
             fake_run(['systemctl', '--user', 'stop', scope])
-            started[-1].kill()   # what stopping the scope does to its processes
+            self.assertIs(launcher, started[-1])   # the launcher is handed over to be killed and reaped
+            launcher.kill(); launcher.wait()
             return True
         with patch.object(readiness, 'ROOT', Path(tempfile.gettempdir())), \
              patch('readiness.subprocess.Popen', side_effect=fake_popen) as popen, \
@@ -322,3 +323,37 @@ class ScopeStopTests(unittest.TestCase):
             self.assertTrue(readiness.scope_stopped('video-trans-setup-x.scope'))
         with patch('readiness.subprocess.run', side_effect=OSError('no bus')), patch('readiness.time.sleep'):
             self.assertFalse(readiness.scope_stopped('video-trans-setup-x.scope'))
+
+
+class SetupScopeTests(unittest.TestCase):
+    def test_scope_stop_kills_and_reaps_the_launcher_before_asking_systemd(self):
+        from unittest.mock import Mock
+        launcher = Mock(); launcher.poll.return_value = None
+        order = []
+        launcher.kill.side_effect = lambda: order.append('kill')
+        def run(argv, **kwargs):
+            if 'is-active' in argv:
+                order.append('is-active')
+                return type('R', (), {'stdout': 'inactive'})()
+            return type('R', (), {'stdout': ''})()
+        with patch('readiness.subprocess.run', side_effect=run):
+            self.assertTrue(readiness.scope_stopped('video-trans-setup-x.scope', launcher))
+        self.assertEqual(order, ['kill', 'is-active'])
+        launcher.wait.assert_called()
+
+    def test_real_setup_scope_ends_a_pipe_holding_leftover(self):
+        # setup.sh exits at once; its setsid grandchild ignores TERM and floods the pipe.
+        import shutil, subprocess, time
+        if not shutil.which('systemd-run'):
+            self.skipTest('no systemd-run')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); pid_file = root / 'pid'
+            (root / 'setup.sh').write_text(
+                'setsid sh -c \'trap "" TERM; while :; do echo xxxxxxxxxxxxxxxx; done\' &\n'
+                f'echo $! > {pid_file}\nexit 0\n')
+            with patch.object(readiness, 'ROOT', root):
+                start = time.monotonic()
+                code, tail = readiness.run_runtime_setup(deadline=120)
+                self.assertLess(time.monotonic() - start, 40)
+            self.assertEqual(code, 0)
+            self.assertFalse(Path('/proc/' + pid_file.read_text().strip()).exists())

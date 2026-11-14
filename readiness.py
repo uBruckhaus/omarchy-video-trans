@@ -298,10 +298,21 @@ SETUP_DEADLINE = 45 * 60   # seconds for setup.sh (runtime packages) in total
 SETUP_TAIL = 4096
 
 
-def scope_stopped(scope):
-    """Stops a scope (TERM to every process in it, KILL after 10 s) and returns True only
-    once systemd reports it inactive or failed."""
+def scope_stopped(scope, launcher=None):
+    """Stops a scope (TERM to every process in it, KILL after 10 s), kills and reaps its
+    launcher (systemd-run, then the helper itself; still our unreaped child) so a scope
+    registered late can no longer start anything, and returns True only once systemd
+    reports the scope inactive or failed."""
     for _ in range(3):
+        try:
+            subprocess.run(['systemctl', '--user', 'stop', '--', scope], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if launcher is not None:
+            if launcher.poll() is None:
+                launcher.kill()
+            launcher.wait()
         try:
             subprocess.run(['systemctl', '--user', 'stop', '--', scope], stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
@@ -334,21 +345,22 @@ def run_runtime_setup(deadline=SETUP_DEADLINE):
                 if left <= 0:
                     timed_out = True
                     break
-                if not selector.select(min(left, 1.0)):
+                ready = selector.select(min(left, 1.0))
+                if proc.poll() is not None:
+                    break  # setup.sh exited; whatever still holds or fills the pipe ends with the scope
+                if not ready:
                     continue
                 chunk = os.read(proc.stdout.fileno(), 65536)
                 if not chunk:
                     break
                 tail = (tail + chunk)[-SETUP_TAIL:]
     finally:
-        # Ends everything still in the scope (TERM, KILL after 10 s) and waits for it.
-        stopped = scope_stopped(scope)
+        exited = proc.poll()  # its own exit code, before the cleanup below may kill it
+        # Ends everything still in the scope (TERM, KILL after 10 s), kills and reaps the
+        # launcher, and waits for systemd to confirm.
+        stopped = scope_stopped(scope, proc)
         proc.stdout.close()
-        try:
-            code = proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()  # systemd-run itself; the scope's processes were handled above
-            code = proc.wait(timeout=10)
+        code = exited if exited is not None else 1
     if not stopped:
         return 1, f'Runtime setup could not be confirmed stopped; check systemctl --user status {scope}.'
     if timed_out:
