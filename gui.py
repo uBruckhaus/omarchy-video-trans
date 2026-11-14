@@ -1,4 +1,5 @@
 """Video Trans: a resizable caption window with adjustable expiry and provider settings."""
+import collections
 import json
 import os
 import re
@@ -94,7 +95,7 @@ class Window(QMainWindow):
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.worker_error)
         self.worker_scope = None
-        self.owned_service = None
+        self.owned_services = []  # provider services the worker started, until confirmed stopped
         self.forced_stop = False
         self.deadline = QTimer(self)
         self.deadline.setSingleShot(True)
@@ -110,7 +111,7 @@ class Window(QMainWindow):
         self.cleanup_timer = QTimer(self)
         self.cleanup_timer.setSingleShot(True)
         self.cleanup_timer.timeout.connect(lambda: self.cleanup.kill() if self.cleanup.state() != QProcess.NotRunning else None)
-        self.provider_requests = 0
+        self.provider_requests = collections.deque()  # start times of pending provider requests
         layout = QVBoxLayout()
         wrapper = QWidget()
         wrapper.setObjectName('videoTransSurface')
@@ -411,7 +412,7 @@ class Window(QMainWindow):
     def send(self, action):
         if self.stopping:
             return False
-        if self.process.state() == QProcess.NotRunning and (self.worker_scope or self.owned_service):
+        if self.process.state() == QProcess.NotRunning and (self.worker_scope or self.owned_services):
             # The previous worker's processes or service are not confirmed gone yet.
             self.end_worker_units()
             self.set_status('Still ending the previous speech worker · try again in a moment.')
@@ -421,7 +422,6 @@ class Window(QMainWindow):
         if self.process.state() == QProcess.NotRunning:
             self.buffer.clear()
             self.forced_stop = False
-            self.owned_service = None
             self.worker_scope = 'video-trans-worker-' + os.urandom(8).hex() + '.scope'
             self.process.start('systemd-run', ['--user', '--scope', '--quiet', '--collect',
                                                '--unit=' + self.worker_scope, '-p', 'TimeoutStopSec=' + SCOPE_STOP_TIMEOUT,
@@ -434,8 +434,10 @@ class Window(QMainWindow):
         self.process.write((json.dumps(data) + '\n').encode())
         if action in ('models', 'suggest') and not self.starting and not self.downloading:
             # These may start a provider service; the deadline covers the newest of them.
-            self.provider_requests += 1
-            self.deadline.start(PROVIDER_DEADLINE_MS)
+            # The deadline always runs for the oldest pending one.
+            self.provider_requests.append(time.monotonic())
+            if not self.deadline.isActive():
+                self.deadline.start(PROVIDER_DEADLINE_MS)
         return True
 
     def worker_error(self, error):
@@ -500,9 +502,12 @@ class Window(QMainWindow):
 
     def provider_answered(self):
         if self.provider_requests and not self.starting and not self.downloading:
-            self.provider_requests -= 1
+            self.provider_requests.popleft()
             if not self.provider_requests:
                 self.deadline.stop()
+            else:
+                left = PROVIDER_DEADLINE_MS - int((time.monotonic() - self.provider_requests[0]) * 1000)
+                self.deadline.start(max(0, left))
 
     def deadline_passed(self):
         # Startup or a download that does not finish in time is stopped like Stop.
@@ -515,8 +520,7 @@ class Window(QMainWindow):
         units = []
         if self.worker_scope and re.fullmatch(r'video-trans-worker-[0-9a-f]{16}\.scope', self.worker_scope):
             units.append(self.worker_scope)
-        if self.owned_service in OWNED_SERVICES:
-            units.append(self.owned_service)
+        units += [unit for unit in self.owned_services if unit in OWNED_SERVICES]
         return units
 
     def end_worker_units(self):
@@ -524,7 +528,7 @@ class Window(QMainWindow):
         provider service it started, then checks that none of them is still active."""
         units = self.worker_units()
         if not units:
-            self.worker_scope = self.owned_service = None
+            self.worker_scope, self.owned_services = None, []
             return
         if self.cleanup.state() == QProcess.NotRunning:
             self.cleanup_attempts += 1
@@ -534,7 +538,7 @@ class Window(QMainWindow):
     def cleanup_finished(self, code, status):
         self.cleanup_timer.stop()
         if code == 0 and status == QProcess.NormalExit:
-            self.worker_scope = self.owned_service = None
+            self.worker_scope, self.owned_services = None, []
             self.cleanup_attempts = 0
             if self.closing:
                 QApplication.instance().quit()
@@ -594,8 +598,9 @@ class Window(QMainWindow):
                 else:
                     self.checks.append(row)
             elif kind == 'owned_service':
-                if event.get('unit') in OWNED_SERVICES:
-                    self.owned_service = event['unit']
+                # Every one is kept until a cleanup confirms it stopped, also across provider switches.
+                if event.get('unit') in OWNED_SERVICES and event['unit'] not in self.owned_services:
+                    self.owned_services.append(event['unit'])
             elif kind == 'downloaded':
                 self.downloading = False
                 self.deadline.stop()
@@ -646,7 +651,7 @@ class Window(QMainWindow):
 
     def finished(self, code, status):
         self.deadline.stop()
-        self.provider_requests = 0
+        self.provider_requests.clear()
         self.boundary.stop()
         # Whatever the worker left (normally nothing): its scope and the service it started.
         self.end_worker_units()

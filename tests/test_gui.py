@@ -398,13 +398,13 @@ class WorkerLifecycleTests(WindowFixture):
         self.window.worker_scope = 'video-trans-worker-0123456789abcdef.scope'
         self.event({'type': 'owned_service', 'unit': 'ollama.service'})
         self.event({'type': 'owned_service', 'unit': 'sshd.service'})        # never a unit outside the list
-        self.assertEqual(self.window.owned_service, 'ollama.service')
+        self.assertEqual(self.window.owned_services, ['ollama.service'])
         self.window.forced_stop = True
         with patch.object(self.window.cleanup, 'start') as start:
             self.window.finished(9, gui.QProcess.CrashExit)
         self.assertEqual(start.call_args.args[1][3:], ['video-trans-worker-0123456789abcdef.scope', 'ollama.service'])
         # Ownership is kept, and no new worker starts, until the stop is confirmed.
-        self.assertEqual(self.window.owned_service, 'ollama.service')
+        self.assertEqual(self.window.owned_services, ['ollama.service'])
         self.window.process = Mock(); self.window.process.state.return_value = gui.QProcess.NotRunning
         self.patches[2].stop()
         try:
@@ -414,9 +414,9 @@ class WorkerLifecycleTests(WindowFixture):
             self.patches[2].start()
         self.window.process.start.assert_not_called()
         self.window.cleanup_finished(1, gui.QProcess.NormalExit)       # not confirmed: kept, retried
-        self.assertEqual(self.window.owned_service, 'ollama.service')
+        self.assertEqual(self.window.owned_services, ['ollama.service'])
         self.window.cleanup_finished(0, gui.QProcess.NormalExit)       # confirmed
-        self.assertIsNone(self.window.owned_service)
+        self.assertEqual(self.window.owned_services, [])
         self.assertIsNone(self.window.worker_scope)
 
     def test_end_units_script_only_succeeds_when_systemd_reports_inactive(self):
@@ -437,7 +437,7 @@ class WorkerLifecycleTests(WindowFixture):
 
     def test_cleanup_is_bounded_and_keeps_ownership_when_unconfirmed(self):
         self.window.worker_scope = 'video-trans-worker-0123456789abcdef.scope'
-        self.window.owned_service = 'ollama.service'
+        self.window.owned_services = ['ollama.service']
         with patch.object(self.window.cleanup, 'start'), patch.object(gui.QTimer, 'singleShot'):
             self.window.end_worker_units()
             self.assertTrue(self.window.cleanup_timer.isActive())
@@ -446,7 +446,7 @@ class WorkerLifecycleTests(WindowFixture):
                 self.window.cleanup_finished(1, gui.QProcess.NormalExit)
                 self.window.cleanup_attempts += 1
         self.assertIn('Could not stop', self.window.last_error)
-        self.assertEqual(self.window.owned_service, 'ollama.service')   # still refused for new workers
+        self.assertEqual(self.window.owned_services, ['ollama.service'])   # still refused for new workers
         self.window.cleanup_timer.stop()
 
     def test_queued_provider_requests_keep_their_deadline(self):
@@ -485,3 +485,22 @@ class WorkerLifecycleTests(WindowFixture):
         self.assertTrue(self.window.boundary.isActive())                     # stopped like Stop
         self.assertIn('took too long', self.window.last_error)
         self.window.boundary.stop()
+
+    def test_owned_services_are_all_kept_across_provider_switches(self):
+        self.window.worker_scope = 'video-trans-worker-0123456789abcdef.scope'
+        self.event({'type': 'owned_service', 'unit': 'llama-server.service'})
+        self.event({'type': 'owned_service', 'unit': 'ollama.service'})
+        self.assertEqual(self.window.worker_units(), ['video-trans-worker-0123456789abcdef.scope', 'llama-server.service', 'ollama.service'])
+
+    def test_provider_deadline_stays_with_the_oldest_request(self):
+        process = Mock(); process.state.return_value = gui.QProcess.Running
+        self.window.process = process
+        self.patches[2].stop()
+        try:
+            self.window.send('models')
+            first_remaining = self.window.deadline.remainingTime()
+            self.window.send('suggest')                          # a later click does not extend it
+            self.assertLessEqual(self.window.deadline.remainingTime(), first_remaining)
+        finally:
+            self.patches[2].start()
+        self.window.deadline.stop()
