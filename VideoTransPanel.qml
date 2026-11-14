@@ -202,6 +202,9 @@ Ui.Panel {
 
   // A layer-shell panel that takes the keyboard when it opens; an xdg-popup
   // (PopupCard) never receives keys, so text fields stayed dead.
+  // See-through with the window style (Theme Manager → Settings).
+  PopupGlass { inside: shot; active: popup.open }
+
   Ui.KeyboardPanel {
     id: popup
     focusTarget: content
